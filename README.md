@@ -1,4 +1,4 @@
-# CleverHans (latest release: v2.0.0) for Attacking Binarized Neural Networks
+# CleverHans (latest release: v2.0.0) for evaluating robustness of ensembles of mixed precision DNN models
 
 <img src="https://github.com/tensorflow/cleverhans/blob/master/assets/logo.png?raw=true" alt="cleverhans logo">
 
