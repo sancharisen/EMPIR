@@ -19,7 +19,8 @@ from tensorflow.python.platform import flags
 from cleverhans.utils import set_log_level, parse_model_settings, build_model_save_path
 from cleverhans.attacks import FastGradientMethod
 from cleverhans.utils_keras import cnn_model
-from cleverhans.utils_tf import model_train, model_eval, batch_eval, tf_model_load
+from cleverhans.utils_tf import model_train, model_eval, model_eval_ensemble, batch_eval, tf_model_load
+from cleverhans.utils_tf import model_train_teacher, model_train_student, model_train_inpgrad_reg #for training with input gradient regularization
 
 FLAGS = flags.FLAGS
 
@@ -27,9 +28,19 @@ ATTACK_CARLINI_WAGNER_L2 = 0
 ATTACK_JSMA = 1
 ATTACK_FGSM = 2
 ATTACK_MADRYETAL = 3
+ATTACK_BASICITER = 4
 MAX_BATCH_SIZE = 100
 MAX_BATCH_SIZE = 100
 
+# enum adversarial training types
+ADVERSARIAL_TRAINING_MADRYETAL = 1
+ADVERSARIAL_TRAINING_FGSM = 2
+MAX_EPS = 0.3 
+
+# Scaling input to softmax
+INIT_T = 1.0
+#ATTACK_T = 1.0
+ATTACK_T = 0.25
 
 def data_cifar10():
     """
@@ -160,6 +171,9 @@ def main(argv=None):
     x = tf.placeholder(tf.float32, shape=(None, img_rows, img_cols, channels))
     y = tf.placeholder(tf.float32, shape=(None, 10))
     phase = tf.placeholder(tf.bool, name="phase")
+    logits_scalar = tf.placeholder_with_default(
+        INIT_T, shape=(), name="logits_temperature")
+
 
     model_path = FLAGS.model_path
     targeted = True if FLAGS.targeted else False
@@ -176,11 +190,40 @@ def main(argv=None):
 
     attack = FLAGS.attack
     attack_iterations = FLAGS.attack_iterations
+    nb_iter = FLAGS.nb_iter
+   
+    #### EMPIR extra flags
+    lowprecision=FLAGS.lowprecision
+    abits=FLAGS.abits
+    wbits=FLAGS.wbits
+    abitsList=FLAGS.abitsList
+    wbitsList=FLAGS.wbitsList
+    stocRound=True if FLAGS.stocRound else False
+    rand=FLAGS.rand 
+    model_path2 = FLAGS.model_path2
+    model_path1 = FLAGS.model_path1
+    model_path3 = FLAGS.model_path3
+    ensembleThree=True if FLAGS.ensembleThree else False
+    abits2=FLAGS.abits2
+    wbits2=FLAGS.wbits2
+    abits2List=FLAGS.abits2List
+    wbits2List=FLAGS.wbits2List
+    inpgradreg = True if FLAGS.inpgradreg else False
+    distill = True if FLAGS.distill else False
+    student_epochs = FLAGS.student_epochs
+    l2dbl = FLAGS.l2dbl
+    l2cs = FLAGS.l2cs
+    ####
 
     save = False
     train_from_scratch = False
-
-    if model_path is not None:
+    
+    if ensembleThree: 
+        if (model_path1 is None or model_path2 is None or model_path3 is None):
+            train_from_scratch = True
+        else:
+            train_from_scratch = False
+    elif model_path is not None:
         if os.path.exists(model_path):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
@@ -205,12 +248,99 @@ def main(argv=None):
             from cleverhans_tutorials.tutorial_models import make_basic_binary_cnn
             model = make_basic_binary_cnn(phase, 'bin_', input_shape=(
                 None, img_rows, img_cols, channels), nb_filters=nb_filters)
+    elif ensembleThree: # For trainable version of combined model with both high and low precision
+       if (wbitsList is None) or (abitsList is None): # Layer wise separate quantization not specified for first model
+           if (wbits==0) or (abits==0):
+               print("Error: the number of bits for constant precision weights and activations across layers for the first model have to specified using wbits1 and abits1 flags")
+               sys.exit(1)
+           else:
+               fixedPrec1 = 1
+       elif (len(wbitsList) != 3) or (len(abitsList) != 3):
+           print("Error: Need to specify the precisions for activations and weights for the atleast the three convolutional layers of the first model")  
+           sys.exit(1)
+       else: 
+           fixedPrec1 = 0
+       
+       if (wbits2List is None) or (abits2List is None): # Layer wise separate quantization not specified for second model
+           if (wbits2==0) or (abits2==0):
+               print("Error: the number of bits for constant precision weights and activations across layers for the second model have to specified using wbits1 and abits1 flags")
+               sys.exit(1)
+           else:
+               fixedPrec2 = 1
+       elif (len(wbits2List) != 3) or (len(abits2List) != 3):
+           print("Error: Need to specify the precisions for activations and weights for the atleast the three convolutional layers of the second model")  
+           sys.exit(1)
+       else: 
+           fixedPrec2 = 0
+
+       if (fixedPrec2 != 1) or (fixedPrec1 != 1): # Atleast one of the models have separate precisions per layer
+           fixedPrec=0
+           print("Within atleast one model has separate precisions")
+           if (fixedPrec1 == 1): # first layer has fixed precision
+               abitsList = (abits, abits, abits)
+               wbitsList = (wbits, wbits, wbits)
+           if (fixedPrec2 == 1): # second layer has fixed precision
+               abits2List = (abits2, abits2, abits2)
+               wbits2List = (wbits2, wbits2, wbits2)
+       else:
+           fixedPrec=1
+       
+       if (train_from_scratch):
+           print ("The ensemble model cannot be trained from scratch")
+           sys.exit(1)
+       if fixedPrec == 1:
+           from cleverhans_tutorials.tutorial_models import make_ensemble_three_cifar_cnn
+           model = make_ensemble_three_cifar_cnn(
+               phase, logits_scalar, 'lp1_', 'lp2_', 'fp_', wbits, abits, wbits2, abits2, input_shape=(None, img_rows, img_cols, channels), nb_filters=nb_filters) 
+       else:
+           from cleverhans_tutorials.tutorial_models import make_ensemble_three_cifar_cnn_layerwise
+           model = make_ensemble_three_cifar_cnn_layerwise(
+               phase, logits_scalar, 'lp1_', 'lp2_', 'fp_', wbitsList, abitsList, wbits2List, abits2List, input_shape=(None, img_rows, img_cols, channels), nb_filters=nb_filters) 
+    elif lowprecision:
+       if (wbitsList is None) or (abitsList is None): # Layer wise separate quantization not specified
+           if (wbits==0) or (abits==0):
+               print("Error: the number of bits for constant precision weights and activations across layers have to specified using wbits and abits flags")
+               sys.exit(1)
+           else:
+               fixedPrec = 1
+       elif (len(wbitsList) != 3) or (len(abitsList) != 3):
+           print("Error: Need to specify the precisions for activations and weights for the atleast the three convolutional layers")  
+           sys.exit(1)
+       else: 
+           fixedPrec = 0
+       
+       if fixedPrec:
+           from cleverhans_tutorials.tutorial_models import make_basic_lowprecision_cifar_cnn
+           model = make_basic_lowprecision_cifar_cnn(
+               phase, logits_scalar, 'lp_', wbits, abits, input_shape=(
+            None, img_rows, img_cols, channels), nb_filters=nb_filters, stocRound=stocRound)  
+       else:
+           from cleverhans_tutorials.tutorial_models import make_layerwise_lowprecision_cifar_cnn
+           model = make_layerwise_lowprecision_cifar_cnn(
+               phase, logits_scalar, 'lp_', wbitsList, abitsList, input_shape=(
+            None, img_rows, img_cols, channels), nb_filters=nb_filters, stocRound=stocRound)  
+    elif distill:
+      from cleverhans_tutorials.tutorial_models import make_distilled_cifar_cnn
+      model = make_distilled_cifar_cnn(phase, logits_scalar,
+              'teacher_fp_', 'fp_', nb_filters=nb_filters, input_shape=(None, img_rows, img_cols, channels))  
+    ####
     else:
-        from cleverhans_tutorials.tutorial_models import make_basic_cnn
-        model = make_basic_cnn(phase, 'fp_', input_shape=(
+        from cleverhans_tutorials.tutorial_models import make_basic_cifar_cnn
+        model = make_basic_cifar_cnn(phase, logits_scalar, 'fp_', input_shape=(
             None, img_rows, img_cols, channels), nb_filters=nb_filters)
 
-    preds = model(x, reuse=False)
+
+    # separate predictions of teacher for distilled training
+    if distill:
+        teacher_preds = model.teacher_call(x, reuse=False)
+        teacher_logits = model.get_teacher_logits(x, reuse=False)
+
+    # separate calling function for ensemble models
+    if ensembleThree:
+        preds = model.ensemble_call(x, reuse=False)
+    else:
+    ##default
+        preds = model(x, reuse=False)
     print("Defined TensorFlow model graph.")
 
     rng = np.random.RandomState([2017, 8, 30])
@@ -219,8 +349,12 @@ def main(argv=None):
         # Evaluate the accuracy of the CIFAR10 model on legitimate test
         # examples
         eval_params = {'batch_size': batch_size}
-        acc = model_eval(
-            sess, x, y, preds, X_test, Y_test, phase=phase, args=eval_params)
+        if ensembleThree:
+            acc = model_eval_ensemble(
+                sess, x, y, preds, X_test, Y_test, phase=phase, args=eval_params)
+        else:
+            acc = model_eval(
+                sess, x, y, preds, X_test, Y_test, phase=phase, args=eval_params)
         assert X_test.shape[0] == 10000, X_test.shape
         print('Test accuracy on legitimate examples: %0.4f' % acc)
 
@@ -236,13 +370,28 @@ def main(argv=None):
         'train_scope': 'train',
         'is_training': True
     }
+    
+    if adv != 0:
+        if adv == ADVERSARIAL_TRAINING_MADRYETAL:
+            from cleverhans.attacks import MadryEtAl
+            train_attack_params = {'eps': MAX_EPS, 'eps_iter': 0.01,
+                                   'nb_iter': nb_iter}
+            train_attacker = MadryEtAl(model, sess=sess)
 
-    if adv:
-        from cleverhans.attacks import FastGradientMethod
-        fgsm = FastGradientMethod(model, back='tf', sess=sess)
-        fgsm_params = {'eps': eps, 'clip_min': 0., 'clip_max': 1.}
-        adv_x_train = fgsm.generate(x, phase, **fgsm_params)
-        preds_adv = model.get_probs(adv_x_train)
+        elif adv == ADVERSARIAL_TRAINING_FGSM:
+            from cleverhans.attacks import FastGradientMethod
+            stddev = int(np.ceil((MAX_EPS * 255) // 2))
+            train_attack_params = {'eps': tf.abs(tf.truncated_normal(
+                shape=(batch_size, 1, 1, 1), mean=0, stddev=stddev))}
+            train_attacker = FastGradientMethod(model, back='tf', sess=sess)
+        # create the adversarial trainer
+        train_attack_params.update({'clip_min': 0., 'clip_max': 1.})
+        adv_x_train = train_attacker.generate(x, phase, **train_attack_params)
+        preds_adv_train = model.get_probs(adv_x_train)
+
+        eval_attack_params = {'eps': MAX_EPS, 'clip_min': 0., 'clip_max': 1.}
+        adv_x_eval = train_attacker.generate(x, phase, **eval_attack_params)
+        preds_adv_eval = model.get_probs(adv_x_eval)  # * logits_scalar
 
     if train_from_scratch:
         if save:
@@ -251,8 +400,38 @@ def main(argv=None):
                 train_params.update({'nb_epochs': delay})
 
         # do clean training for 'nb_epochs' or 'delay' epochs
-        model_train(sess, x, y, preds, X_train, Y_train, phase=phase,
-                    evaluate=evaluate, args=train_params, save=save, rng=rng)
+        if distill:
+            temperature = 10 # 1 means the teacher predictions are used as it is
+            teacher_scaled_preds_val = model_train_teacher(sess, x, y, teacher_preds, teacher_logits, 
+                        temperature, X_train, Y_train, phase=phase, args=train_params, rng=rng)
+            eval_params = {'batch_size': batch_size}
+            teacher_acc = model_eval(
+                sess, x, y, teacher_preds, X_test, Y_test, phase=phase, args=eval_params)
+            print('Test accuracy of the teacher model on legitimate examples: %0.4f' % teacher_acc)
+            print('Training the student model...')
+            student_train_params = {
+                'binary': binary,
+                'nb_epochs': student_epochs,
+                'batch_size': batch_size,
+                'learning_rate': learning_rate,
+                'loss_name': 'train loss',
+                'filename': 'model',
+                'reuse_global_step': False,
+                'train_scope': 'train',
+                'is_training': True
+            }
+            if save:
+                student_train_params.update({'log_dir': model_path})
+            y_teacher = tf.placeholder(tf.float32, shape=(None, nb_classes))
+            model_train_student(sess, x, y, preds, temperature, X_train, Y_train, y_teacher=y_teacher, 
+                        teacher_preds=teacher_scaled_preds_val, alpha=0.3, beta=0.7, phase=phase, evaluate=evaluate, args=student_train_params, save=save, rng=rng)
+        elif inpgradreg: 
+            model_train_inpgrad_reg(sess, x, y, preds, X_train, Y_train, phase=phase,
+                        evaluate=evaluate, l2dbl = l2dbl, l2cs = l2cs, args=train_params, save=save, rng=rng)
+        else: 
+            # do clean training for 'nb_epochs' or 'delay' epochs
+            model_train(sess, x, y, preds, X_train, Y_train, phase=phase,
+                        evaluate=evaluate, args=train_params, save=save, rng=rng)
 
         # optionally do additional adversarial training
         if adv:
@@ -260,16 +439,38 @@ def main(argv=None):
             train_params.update({'nb_epochs': nb_epochs - delay})
             train_params.update({'reuse_global_step': True})
             model_train(sess, x, y, preds, X_train, Y_train, phase=phase,
-                        predictions_adv=preds_adv, evaluate=evaluate, args=train_params,
+                        predictions_adv=preds_adv_train, evaluate=evaluate, args=train_params,
                         save=save, rng=rng)
+
     else:
-        tf_model_load(sess, model_path)
-        print('Restored model from %s' % model_path)
+        if ensembleThree: 
+            variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+            stored_variables = ['lp_conv1_init/k', 'lp_conv2_init/k', 'lp_conv3_init/k', 'lp_ip1init/W', 'lp_logits_init/W']
+            variable_dict = dict(zip(stored_variables, variables[:5])) 
+            print("dict for mapping variables")
+            print(variable_dict)
+            # Restore the first set of variables from model_path1
+            saver = tf.train.Saver(variable_dict)
+            saver.restore(sess, tf.train.latest_checkpoint(model_path1))
+            # Restore the second set of variables from model_path2
+            variable_dict = dict(zip(stored_variables, variables[5:10]))
+            saver2 = tf.train.Saver(variable_dict)
+            saver2.restore(sess, tf.train.latest_checkpoint(model_path2))
+            stored_variables = ['fp_conv1_init/k', 'fp_conv2_init/k', 'fp_conv3_init/k', 'fp_ip1init/W', 'fp_logits_init/W']
+            variable_dict = dict(zip(stored_variables, variables[10:]))
+            saver3 = tf.train.Saver(variable_dict)
+            saver3.restore(sess, tf.train.latest_checkpoint(model_path3))
+        else:
+            tf_model_load(sess, model_path)
+            print('Restored model from %s' % model_path)
         evaluate()
 
     # Evaluate the accuracy of the CIFAR10 model on legitimate test examples
     eval_params = {'batch_size': batch_size}
-    accuracy = model_eval(sess, x, y, preds, X_test, Y_test, phase=phase,
+    if ensembleThree: 
+        accuracy = model_eval_ensemble(sess, x, y, preds, X_test, Y_test, phase=phase, feed={phase: False}, args=eval_params)
+    else:
+        accuracy = model_eval(sess, x, y, preds, X_test, Y_test, phase=phase,
                           feed={phase: False}, args=eval_params)
 
     print('Test accuracy on legitimate test examples: {0}'.format(accuracy))
@@ -304,9 +505,14 @@ def main(argv=None):
           ' adversarial examples')
     print("This could take some time ...")
 
+    if ensembleThree:
+        model_type = 'ensembleThree'
+    else:
+        model_type = 'default'
+
     if attack == ATTACK_CARLINI_WAGNER_L2:
         from cleverhans.attacks import CarliniWagnerL2
-        attacker = CarliniWagnerL2(model, back='tf', sess=sess)
+        attacker = CarliniWagnerL2(model, back='tf', model_type=model_type, sess=sess)
         attack_params = {'binary_search_steps': 1,
                          'max_iterations': attack_iterations,
                          'learning_rate': 0.1,
@@ -315,15 +521,15 @@ def main(argv=None):
                          }
     elif attack == ATTACK_JSMA:
         from cleverhans.attacks import SaliencyMapMethod
-        attacker = SaliencyMapMethod(model, back='tf', sess=sess)
+        attacker = SaliencyMapMethod(model, back='tf', model_type=model_type, sess=sess)
         attack_params = {'theta': 1., 'gamma': 0.1}
     elif attack == ATTACK_FGSM:
         from cleverhans.attacks import FastGradientMethod
-        attacker = FastGradientMethod(model, back='tf', sess=sess)
+        attacker = FastGradientMethod(model, back='tf', model_type=model_type, sess=sess)
         attack_params = {'eps': eps}
     elif attack == ATTACK_MADRYETAL:
         from cleverhans.attacks import MadryEtAl
-        attacker = MadryEtAl(model, back='tf', sess=sess)
+        attacker = MadryEtAl(model, back='tf', model_type=model_type, sess=sess)
         attack_params = {'eps': eps, 'eps_iter': 0.01, 'nb_iter': nb_iter}
     else:
         print("Attack undefined")
@@ -347,11 +553,15 @@ def main(argv=None):
         adv_accuracy = model_eval(sess, x, y, preds, X_test_adv, true_labels,
                                   phase=phase, args=eval_params)
     else:
-        assert X_test_adv.shape[0] == nb_samples, X_test_adv.shape
+        # assert X_test_adv.shape[0] == nb_samples, X_test_adv.shape
         # Evaluate the accuracy of the CIFAR10 model on adversarial examples
         print("Evaluating un-targeted results")
-        adv_accuracy = model_eval(sess, x, y, preds, X_test_adv, Y_test,
+        if ensembleThree:
+            adv_accuracy = model_eval_ensemble(sess, x, y, preds, X_test_adv, Y_test,
                                   phase=phase, args=eval_params)
+        else: #default below
+            adv_accuracy = model_eval(sess, x, y, preds, X_test_adv, Y_test,
+                                      phase=phase, args=eval_params)
 
     # Compute the number of adversarial examples that were successfully found
     print('Test accuracy on adversarial examples {0:.4f}'.format(adv_accuracy))
@@ -424,6 +634,8 @@ if __name__ == '__main__':
                      action="store_true")
     par.add_argument('--scale', help='Scale activations of the binary model?',
                      action="store_true")
+    par.add_argument('--rand', help='Stochastic weight layer?',
+                     action="store_true")
 
     # Attack specific flags
     par.add_argument('--eps', type=float, default=0.3,
@@ -438,10 +650,36 @@ if __name__ == '__main__':
         '--targeted', help='Run a targeted attack?', action="store_true")
     # Adversarial training flags
     par.add_argument(
-        '--adv', help='Do MadryEtAl adversarial training?', action="store_true")
+        '--adv', help='Adversarial training type?', type=int, default=0)
     par.add_argument('--delay', type=int,
-                     default=0, help='Nb of epochs to delay adv training by')
-
+                     default=10, help='Nb of epochs to delay adv training by')
+    par.add_argument('--nb_iter', type=int,
+                     default=40, help='Nb of iterations of PGD')
+    
+    # EMPIR specific flags
+    par.add_argument('--lowprecision', help='Use other low precision models', action="store_true")
+    par.add_argument('--wbits', type=int, default=0, help='No. of bits in weight representation')
+    par.add_argument('--abits', type=int, default=0, help='No. of bits in activation representation')
+    par.add_argument('--wbitsList', type=int, nargs='+', help='List of No. of bits in weight representation for different layers')
+    par.add_argument('--abitsList', type=int, nargs='+', help='List of No. of bits in activation representation for different layers')
+    par.add_argument('--stocRound', help='Stochastic rounding for weights (only in training) and activations?', action="store_true")
+    par.add_argument('--useSeparateSeed', help='Using a seed other than the default set_random_seed for initializing the lowprecision model', action="store_true") 
+    par.add_argument('--seed', type=int, default=1, help='Setting a seed other than the default set_random_seed for initializing the lowprecision model') 
+    par.add_argument('--model_path1', help='Path where saved model1 is stored and can be loaded')
+    par.add_argument('--model_path2', help='Path where saved model2 is stored and can be loaded')
+    par.add_argument('--ensembleThree', help='Use a combined version of full precision and two low precision models that can be attacked directly', action="store_true") 
+    par.add_argument('--model_path3', help='Path where saved model3 in case of combinedThree model is stored and can be loaded')
+    par.add_argument('--wbits2', type=int, default=0, help='No. of bits in weight representation of model2, model1 specified using wbits')
+    par.add_argument('--abits2', type=int, default=0, help='No. of bits in activation representation of model2, model2 specified using abits')
+    par.add_argument('--wbits2List', type=int, nargs='+', help='List of No. of bits in weight representation for different layers of model2')
+    par.add_argument('--abits2List', type=int, nargs='+', help='List of No. of bits in activation representation for different layers of model2')
+    # extra flags for defensive distillation
+    par.add_argument('--distill', help='Train the model using distillation', action="store_true") 
+    par.add_argument('--student_epochs', type=int, default=50, help='No. of epochs for which the student model is trained')
+    # extra flags for input gradient regularization
+    par.add_argument('--inpgradreg', help='Train the model using input gradient regularization', action="store_true") 
+    par.add_argument('--l2dbl', type=int, default=0, help='l2 double backprop penalty')
+    par.add_argument('--l2cs', type=int, default=0, help='l2 certainty sensitivity penalty')
     FLAGS = par.parse_args()
 
     if FLAGS.gpu:

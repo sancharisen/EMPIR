@@ -288,6 +288,558 @@ def model_train(sess, x, y, predictions, X_train, Y_train, model=None, phase=Non
 
     return True
 
+# Variation of model_train for the teacher model in distillation
+def model_train_teacher(sess, x, y, predictions, logits, temperature, X_train, Y_train, model=None, phase=None,
+                writer=None, save=False, predictions_adv=None, init_all=False,
+                evaluate=None, verbose=True, feed=None, args=None, rng=None):
+    """
+    Train a TF graph
+    :param sess: TF session to use when training the graph
+    :param x: input placeholder
+    :param y: output placeholder (for labels)
+    :param predictions: model output predictions
+    :param X_train: numpy array with training inputs
+    :param Y_train: numpy array with training outputs
+    :param save: boolean controlling the save operation
+    :param predictions_adv: if set with the adversarial example tensor,
+                            will run adversarial training
+    :param init_all: (boolean) If set to true, all TF variables in the session
+                     are (re)initialized, otherwise only previously
+                     uninitialized variables are initialized before training.
+    :param evaluate: function that is run after each training iteration
+                     (typically to display the test/validation accuracy).
+    :param verbose: (boolean) all print statements disabled when set to False.
+    :param feed: An optional dictionary that is appended to the feeding
+                 dictionary before the session runs. Can be used to feed
+                 the learning phase of a Keras model for instance.
+    :param args: dict or argparse `Namespace` object.
+                 Should contain `nb_epochs`, `learning_rate`,
+                 `batch_size`
+                 If save is True, should also contain 'log_dir'
+                 and 'filename'
+    :param rng: Instance of numpy.random.RandomState
+    :return: True if model trained
+    """
+    args = _FlagsWrapper(args or {})
+
+    # Check that necessary arguments were given (see doc above)
+    # assert args.binary, "Precision was not given in args dict"
+    assert args.nb_epochs, "Number of epochs was not given in args dict"
+    assert args.learning_rate, "Learning rate was not given in args dict"
+    assert args.batch_size, "Batch size was not given in args dict"
+
+    if save:
+        assert args.log_dir, "Directory for save was not given in args dict"
+        assert args.filename, "Filename for save was not given in args dict"
+
+    if not verbose:
+        set_log_level(logging.WARNING)
+        warnings.warn("verbose argument is deprecated and will be removed"
+                      " on 2018-02-11. Instead, use utils.set_log_level()."
+                      " For backward compatibility, log_level was set to"
+                      " logging.WARNING (30).")
+
+    if rng is None:
+        rng = np.random.RandomState()
+
+    # Define loss
+    # loss = model_loss(y, predictions)
+    loss = model_loss_temp(y, predictions, temperature)
+    if predictions_adv is not None:
+        loss = (loss + model_loss(y, predictions_adv)) / 2
+
+    with tf.variable_scope(args.train_scope, reuse=args.reuse_global_step):
+        teacher_global_step = tf.get_variable(
+            "teacher_global_step", dtype=tf.int32, initializer=tf.constant(0), trainable=False)
+
+    if args.binary:
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_step = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+            train_step = train_step.minimize(loss)
+    else:
+        train_step = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+        train_step = train_step.minimize(loss)
+    
+    scaled_preds = tf.nn.softmax(logits / temperature)
+    scaled_preds_train = np.zeros([len(X_train), np.size(Y_train, 1)])
+
+    if writer is not None:
+        if args.binary:
+            k_ph = []
+            k_prv_ph = []
+            layer_indices = []
+            for i, layer_name in enumerate(model.layer_names):
+                if 'Conv2D' in layer_name and layer_name != 'Conv2D0':
+                    k_ph.append(create_kernel_placeholder(model, i))
+                    k_prv_ph.append(create_kernel_placeholder(model, i))
+                    layer_indices.append(i)
+            conv2_sign_changes = sign_changes_count_op(k_prv_ph[0], k_ph[0])
+            conv3_sign_changes = sign_changes_count_op(k_prv_ph[1], k_ph[1])
+            conv2_sign_changes_summary = tf.summary.scalar(
+                "sign_changes/conv2", conv2_sign_changes)
+            conv3_sign_changes_summary = tf.summary.scalar(
+                "sign_changes/conv3", conv3_sign_changes)
+
+        assert args.loss_name, "Name of scalar summary loss"
+        training_summary = tf.summary.scalar(args.loss_name, loss)
+        merge_op = tf.summary.merge_all()
+
+    with sess.as_default():
+        if hasattr(tf, "global_variables_initializer"):
+            if init_all:
+                tf.global_variables_initializer().run()
+            else:
+                initialize_uninitialized_global_variables(sess)
+        else:
+            warnings.warn("Update your copy of tensorflow; future versions of "
+                          "CleverHans may drop support for this version.")
+            sess.run(tf.initialize_all_variables())
+
+        init_step = sess.run(teacher_global_step)
+
+        for epoch in xrange(args.nb_epochs):
+            # Compute number of batches
+            nb_batches = int(math.ceil(float(len(X_train)) / args.batch_size))
+            assert nb_batches * args.batch_size >= len(X_train)
+
+            # Indices to shuffle training set
+            index_shuf = list(range(len(X_train)))
+            rng.shuffle(index_shuf)
+
+            prev = time.time()
+            for batch in range(nb_batches):
+
+                step = init_step + (epoch * nb_batches + batch)
+
+                # Compute batch start and end indices
+                start, end = batch_indices(
+                    batch, len(X_train), args.batch_size)
+
+                if batch % 100 == 0:
+                    if writer is not None:
+                        if args.binary:
+                            k_prv_np = []
+                            for i in layer_indices:
+                                k_prv_np.append(
+                                    sess.run(model.layers[i].kernels))
+
+                # Perform one training step
+                feed_dict = {x: X_train[index_shuf[start:end]],
+                             y: Y_train[index_shuf[start:end]],
+                             phase: args.is_training}
+                if feed is not None:
+                    feed_dict.update(feed)
+                sess.run(train_step, feed_dict=feed_dict)
+                if epoch == args.nb_epochs - 1: 
+                    scaled_predicted = sess.run(scaled_preds, feed_dict=feed_dict)
+                    scaled_preds_train[start:end] = scaled_predicted
+
+                if batch % 100 == 0:
+                    if writer is not None:
+                        if args.binary:
+                            k_np = []
+                            for i in layer_indices:
+                                k_np.append(sess.run(model.layers[i].kernels))
+                            for i in range(len(layer_indices)):
+                                feed_dict.update(
+                                    {k_prv_ph[i]: k_prv_np[i], k_ph[i]: k_np[i]})
+                        loss_val, merged_summ = sess.run(
+                            [loss, merge_op], feed_dict=feed_dict)
+                        writer.add_summary(merged_summ, step)
+                        writer.flush()
+                    else:
+                        loss_val = sess.run(loss, feed_dict=feed_dict)
+
+                    #print('epoch %d, batch %d, step %d, loss %.4f' %
+                    #      (epoch, batch, step, loss_val))
+
+            assert end >= len(X_train)  # Check that all examples were used
+            cur = time.time()
+            if verbose:
+                _logger.info("Epoch " + str(epoch) + " took " +
+                             str(cur - prev) + " seconds")
+            if evaluate is not None:
+                evaluate()
+            #teacher_global_step = step
+        if save:
+            save_path = os.path.join(args.log_dir, args.filename)
+            #save_path = args.log_dir
+            saver = tf.train.Saver()
+            if not os.path.exists(args.log_dir):
+                os.makedirs(args.log_dir)
+            saver.save(sess, save_path, global_step=step)
+            _logger.info("Completed model training and saved at: " +
+                         str(save_path))
+        else:
+            _logger.info("Completed model training.")
+
+    return scaled_preds_train
+
+# Modified version of model_train for model loss calculation with a different temperature
+def model_train_student(sess, x, y, predictions, temperature, X_train, Y_train, y_teacher=None, 
+                teacher_preds=None, alpha=0.5, beta=0.5, model=None, phase=None, writer=None, save=False, 
+                predictions_adv=None, init_all=False, evaluate=None, verbose=True, feed=None, args=None, rng=None):
+    """
+    Train a TF graph
+    :param sess: TF session to use when training the graph
+    :param x: input placeholder
+    :param y: output placeholder (for labels)
+    :param predictions: model output predictions
+    :param X_train: numpy array with training inputs
+    :param Y_train: numpy array with training outputs
+    :param save: boolean controlling the save operation
+    :param predictions_adv: if set with the adversarial example tensor,
+                            will run adversarial training
+    :param init_all: (boolean) If set to true, all TF variables in the session
+                     are (re)initialized, otherwise only previously
+                     uninitialized variables are initialized before training.
+    :param evaluate: function that is run after each training iteration
+                     (typically to display the test/validation accuracy).
+    :param verbose: (boolean) all print statements disabled when set to False.
+    :param feed: An optional dictionary that is appended to the feeding
+                 dictionary before the session runs. Can be used to feed
+                 the learning phase of a Keras model for instance.
+    :param args: dict or argparse `Namespace` object.
+                 Should contain `nb_epochs`, `learning_rate`,
+                 `batch_size`
+                 If save is True, should also contain 'log_dir'
+                 and 'filename'
+    :param rng: Instance of numpy.random.RandomState
+    :return: True if model trained
+    """
+    args = _FlagsWrapper(args or {})
+
+    # Check that necessary arguments were given (see doc above)
+    # assert args.binary, "Precision was not given in args dict"
+    assert args.nb_epochs, "Number of epochs was not given in args dict"
+    assert args.learning_rate, "Learning rate was not given in args dict"
+    assert args.batch_size, "Batch size was not given in args dict"
+
+    if save:
+        assert args.log_dir, "Directory for save was not given in args dict"
+        assert args.filename, "Filename for save was not given in args dict"
+
+    if not verbose:
+        set_log_level(logging.WARNING)
+        warnings.warn("verbose argument is deprecated and will be removed"
+                      " on 2018-02-11. Instead, use utils.set_log_level()."
+                      " For backward compatibility, log_level was set to"
+                      " logging.WARNING (30).")
+
+    if rng is None:
+        rng = np.random.RandomState()
+
+    # Define loss
+    # Incorporating both hard and soft labels for training
+    if y_teacher is not None:
+        loss = alpha*model_loss(y, predictions) + beta*model_loss_temp(y_teacher, predictions, temperature)
+    else:
+        loss = model_loss(y, predictions)
+
+    with tf.variable_scope(args.train_scope, reuse=args.reuse_global_step):
+        global_step = tf.get_variable(
+            "global_step", dtype=tf.int32, initializer=tf.constant(0), trainable=False)
+
+    if args.binary:
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_step = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+            train_step = train_step.minimize(loss)
+    else:
+        train_step = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+        train_step = train_step.minimize(loss)
+    
+    if writer is not None:
+        if args.binary:
+            k_ph = []
+            k_prv_ph = []
+            layer_indices = []
+            for i, layer_name in enumerate(model.layer_names):
+                if 'Conv2D' in layer_name and layer_name != 'Conv2D0':
+                    k_ph.append(create_kernel_placeholder(model, i))
+                    k_prv_ph.append(create_kernel_placeholder(model, i))
+                    layer_indices.append(i)
+            conv2_sign_changes = sign_changes_count_op(k_prv_ph[0], k_ph[0])
+            conv3_sign_changes = sign_changes_count_op(k_prv_ph[1], k_ph[1])
+            conv2_sign_changes_summary = tf.summary.scalar(
+                "sign_changes/conv2", conv2_sign_changes)
+            conv3_sign_changes_summary = tf.summary.scalar(
+                "sign_changes/conv3", conv3_sign_changes)
+
+        assert args.loss_name, "Name of scalar summary loss"
+        training_summary = tf.summary.scalar(args.loss_name, loss)
+        merge_op = tf.summary.merge_all()
+
+    with sess.as_default():
+        if hasattr(tf, "global_variables_initializer"):
+            if init_all:
+                tf.global_variables_initializer().run()
+            else:
+                initialize_uninitialized_global_variables(sess)
+        else:
+            warnings.warn("Update your copy of tensorflow; future versions of "
+                          "CleverHans may drop support for this version.")
+            sess.run(tf.initialize_all_variables())
+
+        init_step = sess.run(global_step)
+
+        for epoch in xrange(args.nb_epochs):
+            # Compute number of batches
+            nb_batches = int(math.ceil(float(len(X_train)) / args.batch_size))
+            assert nb_batches * args.batch_size >= len(X_train)
+
+            # Indices to shuffle training set
+            index_shuf = list(range(len(X_train)))
+            rng.shuffle(index_shuf)
+
+            prev = time.time()
+            for batch in range(nb_batches):
+
+                step = init_step + (epoch * nb_batches + batch)
+
+                # Compute batch start and end indices
+                start, end = batch_indices(
+                    batch, len(X_train), args.batch_size)
+
+                if batch % 100 == 0:
+                    if writer is not None:
+                        if args.binary:
+                            k_prv_np = []
+                            for i in layer_indices:
+                                k_prv_np.append(
+                                    sess.run(model.layers[i].kernels))
+
+                # Perform one training step
+                feed_dict = {x: X_train[index_shuf[start:end]],
+                             y: Y_train[index_shuf[start:end]],
+                             y_teacher: teacher_preds[index_shuf[start:end]],
+                             phase: args.is_training}
+                if feed is not None:
+                    feed_dict.update(feed)
+                sess.run(train_step, feed_dict=feed_dict)
+                
+                if batch % 100 == 0:
+                    if writer is not None:
+                        if args.binary:
+                            k_np = []
+                            for i in layer_indices:
+                                k_np.append(sess.run(model.layers[i].kernels))
+                            for i in range(len(layer_indices)):
+                                feed_dict.update(
+                                    {k_prv_ph[i]: k_prv_np[i], k_ph[i]: k_np[i]})
+                        loss_val, merged_summ = sess.run(
+                            [loss, merge_op], feed_dict=feed_dict)
+                        writer.add_summary(merged_summ, step)
+                        writer.flush()
+                    else:
+                        loss_val = sess.run(loss, feed_dict=feed_dict)
+
+                    #print('epoch %d, batch %d, step %d, loss %.4f' %
+                    #      (epoch, batch, step, loss_val))
+
+            assert end >= len(X_train)  # Check that all examples were used
+            cur = time.time()
+            if verbose:
+                _logger.info("Epoch " + str(epoch) + " took " +
+                             str(cur - prev) + " seconds")
+            if evaluate is not None:
+                evaluate()
+            #global_step = step
+        if save:
+            save_path = os.path.join(args.log_dir, args.filename)
+            #save_path = args.log_dir
+            saver = tf.train.Saver()
+            if not os.path.exists(args.log_dir):
+                os.makedirs(args.log_dir)
+            saver.save(sess, save_path, global_step=step)
+            _logger.info("Completed model training and saved at: " +
+                         str(save_path))
+        else:
+            _logger.info("Completed model training.")
+
+    return True
+
+def model_train_inpgrad_reg(sess, x, y, predictions, X_train, Y_train, model=None, phase=None,
+                writer=None, save=False, predictions_adv=None, init_all=False,
+                evaluate=None, l2dbl = 0, l2cs = 0, verbose=True, feed=None, args=None, rng=None):
+    """
+    Train a TF graph
+    :param sess: TF session to use when training the graph
+    :param x: input placeholder
+    :param y: output placeholder (for labels)
+    :param predictions: model output predictions
+    :param X_train: numpy array with training inputs
+    :param Y_train: numpy array with training outputs
+    :param save: boolean controlling the save operation
+    :param predictions_adv: if set with the adversarial example tensor,
+                            will run adversarial training
+    :param init_all: (boolean) If set to true, all TF variables in the session
+                     are (re)initialized, otherwise only previously
+                     uninitialized variables are initialized before training.
+    :param evaluate: function that is run after each training iteration
+                     (typically to display the test/validation accuracy).
+    :param verbose: (boolean) all print statements disabled when set to False.
+    :param feed: An optional dictionary that is appended to the feeding
+                 dictionary before the session runs. Can be used to feed
+                 the learning phase of a Keras model for instance.
+    :param args: dict or argparse `Namespace` object.
+                 Should contain `nb_epochs`, `learning_rate`,
+                 `batch_size`
+                 If save is True, should also contain 'log_dir'
+                 and 'filename'
+    :param rng: Instance of numpy.random.RandomState
+    :return: True if model trained
+    """
+    args = _FlagsWrapper(args or {})
+
+    # Check that necessary arguments were given (see doc above)
+    # assert args.binary, "Precision was not given in args dict"
+    assert args.nb_epochs, "Number of epochs was not given in args dict"
+    assert args.learning_rate, "Learning rate was not given in args dict"
+    assert args.batch_size, "Batch size was not given in args dict"
+
+    if save:
+        assert args.log_dir, "Directory for save was not given in args dict"
+        assert args.filename, "Filename for save was not given in args dict"
+
+    if not verbose:
+        set_log_level(logging.WARNING)
+        warnings.warn("verbose argument is deprecated and will be removed"
+                      " on 2018-02-11. Instead, use utils.set_log_level()."
+                      " For backward compatibility, log_level was set to"
+                      " logging.WARNING (30).")
+
+    if rng is None:
+        rng = np.random.RandomState()
+
+    # Define loss
+    loss = model_loss(y, predictions) + model_loss_inpgrad_reg(x, y, predictions, l2dbl, l2cs)
+    if predictions_adv is not None:
+        loss = (loss + model_loss(x, y, predictions_adv)) / 2
+
+    with tf.variable_scope(args.train_scope, reuse=args.reuse_global_step):
+        global_step = tf.get_variable(
+            "global_step", dtype=tf.int32, initializer=tf.constant(0), trainable=False)
+
+    if args.binary:
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_step = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+            train_step = train_step.minimize(loss)
+    else:
+        train_step = tf.train.AdamOptimizer(learning_rate=args.learning_rate)
+        train_step = train_step.minimize(loss)
+    
+    if writer is not None:
+        if args.binary:
+            k_ph = []
+            k_prv_ph = []
+            layer_indices = []
+            for i, layer_name in enumerate(model.layer_names):
+                if 'Conv2D' in layer_name and layer_name != 'Conv2D0':
+                    k_ph.append(create_kernel_placeholder(model, i))
+                    k_prv_ph.append(create_kernel_placeholder(model, i))
+                    layer_indices.append(i)
+            conv2_sign_changes = sign_changes_count_op(k_prv_ph[0], k_ph[0])
+            conv3_sign_changes = sign_changes_count_op(k_prv_ph[1], k_ph[1])
+            conv2_sign_changes_summary = tf.summary.scalar(
+                "sign_changes/conv2", conv2_sign_changes)
+            conv3_sign_changes_summary = tf.summary.scalar(
+                "sign_changes/conv3", conv3_sign_changes)
+
+        assert args.loss_name, "Name of scalar summary loss"
+        training_summary = tf.summary.scalar(args.loss_name, loss)
+        merge_op = tf.summary.merge_all()
+
+    with sess.as_default():
+        if hasattr(tf, "global_variables_initializer"):
+            if init_all:
+                tf.global_variables_initializer().run()
+            else:
+                initialize_uninitialized_global_variables(sess)
+        else:
+            warnings.warn("Update your copy of tensorflow; future versions of "
+                          "CleverHans may drop support for this version.")
+            sess.run(tf.initialize_all_variables())
+
+        init_step = sess.run(global_step)
+
+        for epoch in xrange(args.nb_epochs):
+            # Compute number of batches
+            nb_batches = int(math.ceil(float(len(X_train)) / args.batch_size))
+            assert nb_batches * args.batch_size >= len(X_train)
+
+            # Indices to shuffle training set
+            index_shuf = list(range(len(X_train)))
+            rng.shuffle(index_shuf)
+
+            prev = time.time()
+            for batch in range(nb_batches):
+
+                step = init_step + (epoch * nb_batches + batch)
+
+                # Compute batch start and end indices
+                start, end = batch_indices(
+                    batch, len(X_train), args.batch_size)
+
+                if batch % 100 == 0:
+                    if writer is not None:
+                        if args.binary:
+                            k_prv_np = []
+                            for i in layer_indices:
+                                k_prv_np.append(
+                                    sess.run(model.layers[i].kernels))
+
+                # Perform one training step
+                feed_dict = {x: X_train[index_shuf[start:end]],
+                             y: Y_train[index_shuf[start:end]],
+                             phase: args.is_training}
+                if feed is not None:
+                    feed_dict.update(feed)
+                sess.run(train_step, feed_dict=feed_dict)
+                
+                if batch % 100 == 0:
+                    if writer is not None:
+                        if args.binary:
+                            k_np = []
+                            for i in layer_indices:
+                                k_np.append(sess.run(model.layers[i].kernels))
+                            for i in range(len(layer_indices)):
+                                feed_dict.update(
+                                    {k_prv_ph[i]: k_prv_np[i], k_ph[i]: k_np[i]})
+                        loss_val, merged_summ = sess.run(
+                            [loss, merge_op], feed_dict=feed_dict)
+                        writer.add_summary(merged_summ, step)
+                        writer.flush()
+                    else:
+                        loss_val = sess.run(loss, feed_dict=feed_dict)
+
+                    #print('epoch %d, batch %d, step %d, loss %.4f' %
+                    #      (epoch, batch, step, loss_val))
+
+            assert end >= len(X_train)  # Check that all examples were used
+            cur = time.time()
+            if verbose:
+                _logger.info("Epoch " + str(epoch) + " took " +
+                             str(cur - prev) + " seconds")
+            if evaluate is not None:
+                evaluate()
+            #global_step = step
+        if save:
+            save_path = os.path.join(args.log_dir, args.filename)
+            #save_path = args.log_dir
+            saver = tf.train.Saver()
+            if not os.path.exists(args.log_dir):
+                os.makedirs(args.log_dir)
+            saver.save(sess, save_path, global_step=step)
+            _logger.info("Completed model training and saved at: " +
+                         str(save_path))
+        else:
+            _logger.info("Completed model training.")
+
+    return True
+
 
 def model_eval(sess, x, y, predictions=None, X_test=None, Y_test=None, phase=None, writer=None,
                feed=None, args=None, model=None):
@@ -384,6 +936,100 @@ def model_eval(sess, x, y, predictions=None, X_test=None, Y_test=None, phase=Non
 
     return accuracy
 
+
+def model_eval_ensemble(sess, x, y, predictions=None, X_test=None, Y_test=None, phase=None, writer=None,
+               feed=None, args=None, model=None):
+    """
+    Compute the accuracy of a TF model on some data
+    :param sess: TF session to use when training the graph
+    :param x: input placeholder
+    :param y: output placeholder (for labels)
+    :param predictions: model output predictions
+    :param X_test: numpy array with training inputs
+    :param Y_test: numpy array with training outputs
+    :param feed: An optional dictionary that is appended to the feeding
+             dictionary before the session runs. Can be used to feed
+             the learning phase of a Keras model for instance.
+    :param args: dict or argparse `Namespace` object.
+                 Should contain `batch_size`
+    :param model: (deprecated) if not None, holds model output predictions
+    :return: a float with the accuracy value
+    """
+    args = _FlagsWrapper(args or {})
+
+    assert args.batch_size, "Batch size was not given in args dict"
+    if X_test is None or Y_test is None:
+        raise ValueError("X_test argument and Y_test argument "
+                         "must be supplied.")
+    if model is None and (predictions is None):
+        raise ValueError("One of model argument "
+                         "or both predictions argument must be supplied.")
+    if model is not None:
+        warnings.warn("model argument is deprecated. "
+                      "Switch to predictions argument. "
+                      "model argument will be removed after 2018-01-05.")
+        if predictions is None:
+            predictions = model
+        else:
+            raise ValueError("Exactly one of model argument"
+                             " and predictions argument should be specified.")
+
+    # Define accuracy symbolically
+    if LooseVersion(tf.__version__) >= LooseVersion('1.0.0'):
+        correct_preds = tf.equal(tf.argmax(y, axis=-1),
+                                 predictions)
+    else:
+        correct_preds = tf.equal(tf.argmax(y, axis=tf.rank(y) - 1),
+                                 predictions)                                           
+
+    acc_value = tf.reduce_mean(tf.to_float(correct_preds))
+
+    # Init result var
+    accuracy = 0.0
+
+    if writer is not None:
+        eval_summary = tf.summary.scalar('acc', acc_value)
+
+    with sess.as_default():
+
+        # Compute number of batches
+        nb_batches = int(math.ceil(float(len(X_test)) / args.batch_size))
+        assert nb_batches * args.batch_size >= len(X_test)
+
+        for batch in range(nb_batches):
+            if batch % 100 == 0 and batch > 0:
+                _logger.debug("Batch " + str(batch))
+
+            # Must not use the `batch_indices` function here, because it
+            # repeats some examples.
+            # It's acceptable to repeat during training, but not eval.
+            start = batch * args.batch_size
+            end = min(len(X_test), start + args.batch_size)
+            cur_batch_size = end - start
+
+            # The last batch may be smaller than all others, so we need to
+            # account for variable batch size here
+            feed_dict = {x: X_test[start:end],
+                         y: Y_test[start:end],
+                         phase: False}
+            if feed is not None:
+                feed_dict.update(feed)
+
+            if writer is not None:
+                cur_acc, eval_summ = sess.run(
+                    [acc_value, eval_summary], feed_dict=feed_dict)
+                writer.add_summary(eval_summ, batch)
+                writer.flush()
+            else:
+                cur_acc = acc_value.eval(feed_dict=feed_dict)
+            accuracy += (cur_batch_size * cur_acc)
+
+        assert end >= len(X_test)
+
+        # Divide by number of examples to get final value
+        accuracy /= len(X_test)
+
+    return accuracy
 
 def tf_model_load(sess, file_path=None):
     """

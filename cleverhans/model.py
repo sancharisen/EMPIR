@@ -79,6 +79,66 @@ class Model(object):
         """
         raise NotImplementedError('`fprop` not implemented.')
 
+    # special call for the ensemble model
+    def ensemble_call(self, *args, **kwargs):
+        """
+        For compatibility with functions used as model definitions (taking
+        an input tensor and returning the tensor giving the output
+        of the model on that input).
+        """
+        return self.get_ensemblepreds(*args, **kwargs)
+    
+    def get_ensemblepreds(self, x, reuse=True):
+        """
+        :param x: A symbolic representation of the network input
+        :return: A symbolic representation of the ensemble output predictions 
+        """
+        try:
+            return self.get_layer(x, reuse, 'combined')
+        except NoSuchLayerError:
+            raise NotImplementedError('`combinedLayer` not implemented.')
+    
+    # Returns the average probability of the models that were finally used in the prediction after max voting
+    def get_combinedAvgCorrectProbs(self, x, reuse=True):
+        """
+        :param x: A symbolic representation of the network input
+        :return: A symbolic representation of the output probabilities (i.e.,
+                the output values produced by the softmax layer).
+        """
+        try:
+            return self.get_layer(x, reuse, 'combinedAvgCorrectProb')
+        except NoSuchLayerError:
+            raise NotImplementedError('`combinedAvgCorrectProbLayer` not implemented.')
+
+    # special functions for the teacher model in training with distillation
+    def get_teacher_logits(self, x, reuse):
+        """
+        :param x: A symbolic representation of the network input
+        :return: A symbolic representation of the output logits (i.e., the
+                 values fed as inputs to the softmax layer).
+        """
+        return self.get_layer(x, reuse, 'teacher_logits')
+
+    def get_teacher_probs(self, x, reuse=True):
+        """
+        :param x: A symbolic representation of the network input
+        :return: A symbolic representation of the output probabilities (i.e.,
+                the output values produced by the softmax layer).
+        """
+        try:
+            return self.get_layer(x, reuse, 'teacher_probs')
+        except NoSuchLayerError:
+            import tensorflow as tf
+            return tf.nn.softmax(self.get_teacher_logits(x, True))
+
+    def teacher_call(self, *args, **kwargs):
+        """
+        For compatibility with functions used as model definitions (taking
+        an input tensor and returning the tensor giving the output
+        of the model on that input).
+        """
+        return self.get_teacher_probs(*args, **kwargs)
+
 
 class CallableModelWrapper(Model):
 

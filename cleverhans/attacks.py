@@ -17,7 +17,7 @@ class Attack(object):
     """
     __metaclass__ = ABCMeta
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         :param model: An instance of the cleverhans.model.Model class.
         :param back: The backend to use. Either 'tf' (default) or 'th'
@@ -51,6 +51,8 @@ class Attack(object):
         self.model = model
         self.back = back
         self.sess = sess
+        self.model_type = model_type # for EMPIR added model_type
+        self.num_classes = num_classes # for EMPIR added number of classes 
 
         # We are going to keep track of old graphs and cache them.
         self.graphs = {}
@@ -206,9 +208,13 @@ class Attack(object):
         elif 'y_target' in kwargs:
             labels = kwargs['y_target']
         else:
-            preds = self.model.get_probs(x, reuse=True)
-            preds_max = tf.reduce_max(preds, 1, keep_dims=True)
-            original_predictions = tf.to_float(tf.equal(preds,
+            if self.model_type == 'ensembleThree':
+                preds = self.model.get_ensemblepreds(x, reuse=True)
+                original_predictions = tf.to_float(tf.one_hot(preds, self.num_classes)) # preds just gives the class number above 
+            else: 
+                preds = self.model.get_probs(x, reuse=True)
+                preds_max = tf.reduce_max(preds, 1, keep_dims=True)
+                original_predictions = tf.to_float(tf.equal(preds,
                                                         preds_max))
             labels = tf.stop_gradient(original_predictions)
         if isinstance(labels, np.ndarray):
@@ -237,13 +243,13 @@ class FastGradientMethod(Attack):
     Paper link: https://arxiv.org/abs/1412.6572
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Create a FastGradientMethod instance.
         Note: the model parameter should be an instance of the
         cleverhans.model.Model abstraction provided by CleverHans.
         """
-        super(FastGradientMethod, self).__init__(model, back, sess)
+        super(FastGradientMethod, self).__init__(model, back, sess, model_type, num_classes)
         self.feedable_kwargs = {'eps': np.float32,
                                 'y': np.float32,
                                 'y_target': np.float32,
@@ -283,10 +289,16 @@ class FastGradientMethod(Attack):
 
         labels, nb_classes = self.get_or_guess_labels(x, kwargs)
 
-        return fgm(x, self.model.get_probs(x, reuse=True), y=labels, eps=self.eps,
-                   ord=self.ord, clip_min=self.clip_min,
-                   clip_max=self.clip_max,
-                   targeted=(self.y_target is not None))
+        if self.model_type == 'ensembleThree': ## for EMPIR: extra if condition for covering the multiple combined model case
+            return fgm(x, self.model.get_combinedAvgCorrectProbs(x, reuse=True), y=labels, eps=self.eps,
+                       ord=self.ord, clip_min=self.clip_min,
+                       clip_max=self.clip_max,
+                       targeted=(self.y_target is not None))
+        else:
+            return fgm(x, self.model.get_probs(x, reuse=True), y=labels, eps=self.eps,
+                       ord=self.ord, clip_min=self.clip_min,
+                       clip_max=self.clip_max,
+                       targeted=(self.y_target is not None))
 
     def parse_params(self, eps=0.3, ord=np.inf, y=None, y_target=None,
                      clip_min=None, clip_max=None, **kwargs):
@@ -338,13 +350,13 @@ class BasicIterativeMethod(Attack):
     Paper link: https://arxiv.org/pdf/1607.02533.pdf
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Create a BasicIterativeMethod instance.
         Note: the model parameter should be an instance of the
         cleverhans.model.Model abstraction provided by CleverHans.
         """
-        super(BasicIterativeMethod, self).__init__(model, back, sess)
+        super(BasicIterativeMethod, self).__init__(model, back, sess, model_type, num_classes)
         self.feedable_kwargs = {'eps': np.float32,
                                 'eps_iter': np.float32,
                                 'y': np.float32,
@@ -382,7 +394,10 @@ class BasicIterativeMethod(Attack):
         eta = 0
 
         # Fix labels to the first model predictions for loss computation
-        model_preds = self.model.get_probs(x, reuse=True)
+        if self.model_type == 'ensembleThree':
+            model_preds = self.model.get_combinedAvgCorrectProbs(x, reuse=True)
+        else:
+            model_preds = self.model.get_probs(x, reuse=True)
         preds_max = tf.reduce_max(model_preds, 1, keep_dims=True)
         if self.y_target is not None:
             y = self.y_target
@@ -402,6 +417,8 @@ class BasicIterativeMethod(Attack):
         for i in range(self.nb_iter):
             FGM = FastGradientMethod(self.model, back=self.back,
                                      sess=self.sess)
+            # FGM = FastGradientMethod(self.model, back=self.back, model_type=self.model_type,
+            #                          num_classes=self.num_classes, sess=self.sess) # SANCHARI: added model_type, avgType and num_classes
             # Compute this step's perturbation
             eta = FGM.generate(x + eta, phase, **fgm_params) - x
 
@@ -478,13 +495,13 @@ class SaliencyMapMethod(Attack):
     Paper link: https://arxiv.org/pdf/1511.07528.pdf
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Create a SaliencyMapMethod instance.
         Note: the model parameter should be an instance of the
         cleverhans.model.Model abstraction provided by CleverHans.
         """
-        super(SaliencyMapMethod, self).__init__(model, back, sess)
+        super(SaliencyMapMethod, self).__init__(model, back, sess, model_type, num_classes)
 
         if not isinstance(self.model, Model):
             self.model = CallableModelWrapper(self.model, 'probs')
@@ -517,7 +534,10 @@ class SaliencyMapMethod(Attack):
         assert self.parse_params(**kwargs)
 
         # Define Jacobian graph wrt to this input placeholder
-        preds = self.model.get_probs(x, reuse=True)
+        if self.model_type == 'ensembleThree':
+            preds = self.model.get_combinedAvgCorrectProbs(x, reuse=True)
+        else:
+            preds = self.model.get_probs(x, reuse=True)
         nb_classes = preds.get_shape().as_list()[-1]
         grads = jacobian_graph(preds, x, nb_classes)
 
@@ -580,12 +600,12 @@ class VirtualAdversarialMethod(Attack):
 
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Note: the model parameter should be an instance of the
         cleverhans.model.Model abstraction provided by CleverHans.
         """
-        super(VirtualAdversarialMethod, self).__init__(model, back, sess)
+        super(VirtualAdversarialMethod, self).__init__(model, back, sess, model_type, num_classes)
 
         if self.back == 'th':
             error = "For the Theano version of VAM please call vatm directly."
@@ -652,12 +672,12 @@ class CarliniWagnerL2(Attack):
     as this attack is often much slower than others.
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Note: the model parameter should be an instance of the
         cleverhans.model.Model abstraction provided by CleverHans.
         """
-        super(CarliniWagnerL2, self).__init__(model, back, sess)
+        super(CarliniWagnerL2, self).__init__(model, back, sess, model_type, num_classes)
 
         if self.back == 'th':
             raise NotImplementedError('Theano version not implemented.')
@@ -767,12 +787,12 @@ class ElasticNetMethod(Attack):
     Paper link: https://arxiv.org/abs/1709.04114
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Note: the model parameter should be an instance of the
         cleverhans.model.Model abstraction provided by CleverHans.
         """
-        super(ElasticNetMethod, self).__init__(model, back, sess)
+        super(ElasticNetMethod, self).__init__(model, back, sess, model_type, num_classes)
 
         if self.back == 'th':
             raise NotImplementedError('Theano version not implemented.')
@@ -885,11 +905,11 @@ class DeepFool(Attack):
     Paper link: "https://arxiv.org/pdf/1511.04599.pdf"
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Create a DeepFool instance.
         """
-        super(DeepFool, self).__init__(model, back, sess)
+        super(DeepFool, self).__init__(model, back, sess, model_type, num_classes)
 
         if self.back == 'th':
             raise NotImplementedError('Theano version not implemented.')
@@ -1077,11 +1097,11 @@ class MadryEtAl(Attack):
     Paper link: https://arxiv.org/pdf/1706.06083.pdf
     """
 
-    def __init__(self, model, back='tf', sess=None):
+    def __init__(self, model, back='tf', sess=None, model_type='default', num_classes=10):
         """
         Create a MadryEtAl instance.
         """
-        super(MadryEtAl, self).__init__(model, back, sess)
+        super(MadryEtAl, self).__init__(model, back, sess, model_type, num_classes)
         self.feedable_kwargs = {'eps': np.float32,
                                 'eps_iter': np.float32,
                                 'y': np.float32,
@@ -1179,7 +1199,10 @@ class MadryEtAl(Attack):
         from cleverhans.utils_tf import model_loss, clip_eta
 
         adv_x = x + eta
-        preds = self.model.get_probs(adv_x, reuse=True)
+        if self.model_type == 'ensembleThree': ## for EMPIR extra if condition for covering the multiple combined model case
+            preds = self.model.get_combinedAvgCorrectProbs(adv_x, reuse=True)
+        else: 
+            preds = self.model.get_probs(adv_x, reuse=True)
         loss = model_loss(y, preds)
         if self.targeted:
             loss = -loss
@@ -1210,7 +1233,11 @@ class MadryEtAl(Attack):
         if self.y is not None:
             y = self.y
         else:
-            preds = self.model.get_probs(x)
+            if self.model_type == 'ensembleThree': ## for EMPIR extra if condition for covering the ensemble model case
+                preds = self.model.get_combinedAvgCorrectProbs(x)
+            # default below
+            else:
+                preds = self.model.get_probs(x)
             preds_max = tf.reduce_max(preds, 1, keep_dims=True)
             y = tf.to_float(tf.equal(preds, preds_max))
             y = y / tf.reduce_sum(y, 1, keep_dims=True)
