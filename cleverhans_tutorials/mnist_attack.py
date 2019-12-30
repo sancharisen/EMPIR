@@ -17,7 +17,8 @@ import sys
 from cleverhans.utils import parse_model_settings, build_model_save_path
 from cleverhans.utils import set_log_level, AccuracyReport
 from cleverhans.utils_mnist import data_mnist
-from cleverhans.utils_tf import model_train, model_eval, batch_eval, tf_model_load
+from cleverhans.utils_tf import model_train, model_eval, model_eval_ensemble, batch_eval, tf_model_load
+from cleverhans.utils_tf import model_train_teacher, model_train_student, model_train_inpgrad_reg #for training with input gradient regularization
 
 
 FLAGS = flags.FLAGS
@@ -49,6 +50,10 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
                  eps=0.3, attack=0,
                  attack_iterations=100, model_path=None,
                  targeted=False, binary=False, scale=False, rand=False,
+                 stocRound=False, lowprecision=False,  
+                 wbits=0, abits=0, wbitsList=0, abitsList=0, wbits2=0, abits2=0, wbits2List=0, abits2List=0, 
+                 ensembleThree=False, model_path1=None, model_path2=None, model_path3=None,
+                 distill = False, inpgradreg = False, l2dbl = 0, l2cs = 0, 
                  debug=None, test=False,
                  data_dir=None, delay=0, adv=0, nb_iter=40):
     """
@@ -106,7 +111,12 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
 
     save = False
     train_from_scratch = False
-    if model_path is not None:
+    if ensembleThree: 
+        if (model_path1 is None or model_path2 is None or model_path3 is None):
+            train_from_scratch = True
+        else:
+            train_from_scratch = False
+    elif model_path is not None:
         if os.path.exists(model_path):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
@@ -140,6 +150,79 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
             from cleverhans_tutorials.tutorial_models import make_basic_binary_cnn
             model = make_basic_binary_cnn(
                 phase, logits_scalar, 'bin_', nb_filters=nb_filters)
+    elif ensembleThree: 
+       if (wbitsList is None) or (abitsList is None): # Layer wise separate quantization not specified for first model
+           if (wbits==0) or (abits==0):
+               print("Error: the number of bits for constant precision weights and activations across layers for the first model have to specified using wbits1 and abits1 flags")
+               sys.exit(1)
+           else:
+               fixedPrec1 = 1
+       elif (len(wbitsList) != 3) or (len(abitsList) != 3):
+           print("Error: Need to specify the precisions for activations and weights for the atleast the three convolutional layers of the first model")  
+           sys.exit(1)
+       else: 
+           fixedPrec1 = 0
+       
+       if (wbits2List is None) or (abits2List is None): # Layer wise separate quantization not specified for second model
+           if (wbits2==0) or (abits2==0):
+               print("Error: the number of bits for constant precision weights and activations across layers for the second model have to specified using wbits1 and abits1 flags")
+               sys.exit(1)
+           else:
+               fixedPrec2 = 1
+       elif (len(wbits2List) != 3) or (len(abits2List) != 3):
+           print("Error: Need to specify the precisions for activations and weights for the atleast the three convolutional layers of the second model")  
+           sys.exit(1)
+       else: 
+           fixedPrec2 = 0
+
+       if (fixedPrec2 != 1) or (fixedPrec1 != 1): # Atleast one of the models have separate precisions per layer
+           fixedPrec=0
+           print("Within atleast one model has separate precisions")
+           if (fixedPrec1 == 1): # first layer has fixed precision
+               abitsList = (abits, abits, abits)
+               wbitsList = (wbits, wbits, wbits)
+           if (fixedPrec2 == 1): # second layer has fixed precision
+               abits2List = (abits2, abits2, abits2)
+               wbits2List = (wbits2, wbits2, wbits2)
+       else:
+           fixedPrec=1
+
+       if (train_from_scratch):
+           print ("The ensemble model cannot be trained from scratch")
+           sys.exit(1)
+       if fixedPrec == 1:
+           from cleverhans_tutorials.tutorial_models import make_ensemble_three_cnn
+           model = make_ensemble_three_cnn(
+               phase, logits_scalar, 'lp1_', 'lp2_', 'fp_', wbits, abits, wbits2, abits2, nb_filters=nb_filters) 
+       else:
+           from cleverhans_tutorials.tutorial_models import make_layerwise_three_combined_cnn
+           model = make_layerwise_three_combined_cnn(
+               phase, logits_scalar, 'lp1_', 'lp2_', 'fp_', wbitsList, abitsList, wbits2List, abits2List, nb_filters=nb_filters) 
+    elif lowprecision: # For generic DoReFa net style low precision
+       if (wbitsList is None) or (abitsList is None): # Layer wise separate quantization not specified
+           if (wbits==0) or (abits==0):
+               print("Error: the number of bits for constant precision weights and activations across layers have to specified using wbits and abits flags")
+               sys.exit(1)
+           else:
+               fixedPrec = 1
+       elif (len(wbitsList) != 3) or (len(abitsList) != 3):
+           print("Error: Need to specify the precisions for activations and weights for the atleast the three convolutional layers")  
+           sys.exit(1)
+       else: 
+           fixedPrec = 0
+       
+       if fixedPrec:
+           from cleverhans_tutorials.tutorial_models import make_basic_lowprecision_cnn
+           model = make_basic_lowprecision_cnn(
+               phase, logits_scalar, 'lp_', wbits, abits, nb_filters=nb_filters, stocRound=stocRound) 
+       else:
+           from cleverhans_tutorials.tutorial_models import make_layerwise_lowprecision_cnn
+           model = make_layerwise_lowprecision_cnn(
+               phase, logits_scalar, 'lp_', wbitsList, abitsList, nb_filters=nb_filters, stocRound=stocRound) 
+    elif distill:
+      from cleverhans_tutorials.tutorial_models import make_distilled_cnn
+      model = make_distilled_cnn(phase, logits_scalar,
+              'teacher_fp_', 'fp_', nb_filters=nb_filters)  
     else:
         if rand:
             print('rand=True')
@@ -151,7 +234,16 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
             model = make_basic_cnn(phase, logits_scalar,
                                    'fp_', nb_filters=nb_filters)
 
-    preds = model(x, reuse=False)  # * logits_scalar
+    # separate predictions of teacher for distilled training
+    if distill:
+        teacher_preds = model.teacher_call(x, reuse=False)
+        teacher_logits = model.get_teacher_logits(x, reuse=False)
+    # separate calling function for ensemble models
+    if ensembleThree:
+        preds = model.ensemble_call(x, reuse=False)
+    else:
+    ##default
+        preds = model(x, reuse=False)  # * logits_scalar
     print("Defined TensorFlow model graph.")
 
     ###########################################################################
@@ -197,8 +289,12 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
     def evaluate():
         # Evaluate the accuracy of the MNIST model on clean test examples
         eval_params = {'batch_size': batch_size}
-        acc = model_eval(
-            sess, x, y, preds, X_test, Y_test, phase=phase, args=eval_params)
+        if ensembleThree:
+            acc = model_eval_ensemble(
+                sess, x, y, preds, X_test, Y_test, phase=phase, args=eval_params)
+        else:
+            acc = model_eval(
+                sess, x, y, preds, X_test, Y_test, phase=phase, args=eval_params)
         report.clean_train_clean_eval = acc
         assert X_test.shape[0] == test_end - test_start, X_test.shape
         print('Test accuracy on legitimate examples: %0.4f' % acc)
@@ -222,7 +318,35 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
                 train_params.update({'nb_epochs': delay})
 
         # do clean training for 'nb_epochs' or 'delay' epochs
-        if test:
+        if distill:
+            temperature = 100 # 1 means the teacher predictions are used as it is
+            teacher_scaled_preds_val = model_train_teacher(sess, x, y, teacher_preds, teacher_logits, 
+                        temperature, X_train, Y_train, phase=phase, args=train_params, rng=rng)
+            eval_params = {'batch_size': batch_size}
+            teacher_acc = model_eval(
+                sess, x, y, teacher_preds, X_test, Y_test, phase=phase, args=eval_params)
+            print('Test accuracy of the teacher model on legitimate examples: %0.4f' % teacher_acc)
+            print('Training the student model...')
+            student_train_params = {
+                'binary': binary,
+                'nb_epochs': 50,
+                'batch_size': batch_size,
+                'learning_rate': learning_rate,
+                'loss_name': 'train loss',
+                'filename': 'model',
+                'reuse_global_step': False,
+                'train_scope': 'train',
+                'is_training': True
+            }
+            if save:
+                student_train_params.update({'log_dir': model_path})
+            y_teacher = tf.placeholder(tf.float32, shape=(None, nb_classes))
+            model_train_student(sess, x, y, preds, temperature, X_train, Y_train, y_teacher=y_teacher, 
+                        teacher_preds=teacher_scaled_preds_val, alpha=0.5, beta=0.5, phase=phase, evaluate=evaluate, args=student_train_params, save=save, rng=rng)
+        elif inpgradreg: 
+            model_train_inpgrad_reg(sess, x, y, preds, X_train, Y_train, phase=phase,
+                        evaluate=evaluate, l2dbl = l2dbl, l2cs = l2cs, args=train_params, save=save, rng=rng)
+        elif test:
             model_train(sess, x, y, preds, X_train, Y_train, phase=phase,
                         evaluate=evaluate, args=train_params, save=save, rng=rng)
         else:
@@ -243,13 +367,32 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
                             predictions_adv=preds_adv_train, args=train_params,
                             save=save, rng=rng)
     else:
-        tf_model_load(sess, model_path)
-        print('Restored model from %s' % model_path)
+        if ensembleThree: ## Ensemble models have to loaded from different paths
+            variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+            stored_variables = ['lp_conv1_init/k', 'lp_conv2_bin_init/k', 'lp_conv3_bin_init/k', 'lp_logits_init/W']
+            variable_dict = dict(zip(stored_variables, variables[:4])) 
+            # Restore the first set of variables from model_path1
+            saver = tf.train.Saver(variable_dict)
+            saver.restore(sess, tf.train.latest_checkpoint(model_path1))
+            # Restore the second set of variables from model_path2
+            variable_dict = dict(zip(stored_variables, variables[4:8]))
+            saver2 = tf.train.Saver(variable_dict)
+            saver2.restore(sess, tf.train.latest_checkpoint(model_path2))
+            stored_variables = ['fp_conv1_init/k', 'fp_conv2_init/k', 'fp_conv3_init/k', 'fp_logits_init/W']
+            variable_dict = dict(zip(stored_variables, variables[8:]))
+            saver3 = tf.train.Saver(variable_dict)
+            saver3.restore(sess, tf.train.latest_checkpoint(model_path3))
+        else: #default below
+            tf_model_load(sess, model_path)
+            print('Restored model from %s' % model_path)
         evaluate()
 
     # Evaluate the accuracy of the MNIST model on legitimate test examples
     eval_params = {'batch_size': batch_size}
-    accuracy = model_eval(sess, x, y, preds, X_test, Y_test, phase=phase,
+    if ensembleThree: ## Ensemble models have to be evaluated with a separate function
+        accuracy = model_eval_ensemble(sess, x, y, preds, X_test, Y_test, phase=phase, feed={phase: False}, args=eval_params)
+    else: #default below
+        accuracy = model_eval(sess, x, y, preds, X_test, Y_test, phase=phase,
                           feed={phase: False}, args=eval_params)
     assert X_test.shape[0] == test_end - test_start, X_test.shape
     print('Test accuracy on legitimate test examples: {0}'.format(accuracy))
@@ -302,10 +445,15 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
           ' adversarial examples')
     print("This could take some time ...")
 
+    if ensembleThree:
+        model_type = 'ensembleThree'
+    else:
+        model_type = 'default'
+
     if attack == ATTACK_CARLINI_WAGNER_L2:
         print('Attack: CarliniWagnerL2')
         from cleverhans.attacks import CarliniWagnerL2
-        attacker = CarliniWagnerL2(model, back='tf', sess=sess)
+        attacker = CarliniWagnerL2(model, back='tf', model_type=model_type, num_classes=nb_classes, sess=sess)
         attack_params = {'binary_search_steps': 1,
                          'max_iterations': attack_iterations,
                          'learning_rate': 0.1,
@@ -315,22 +463,22 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
     elif attack == ATTACK_JSMA:
         print('Attack: SaliencyMapMethod')
         from cleverhans.attacks import SaliencyMapMethod
-        attacker = SaliencyMapMethod(model, back='tf', sess=sess)
+        attacker = SaliencyMapMethod(model, back='tf', model_type=model_type, num_classes=nb_classes, sess=sess)
         attack_params = {'theta': 1., 'gamma': 0.1}
     elif attack == ATTACK_FGSM:
         print('Attack: FastGradientMethod')
         from cleverhans.attacks import FastGradientMethod
-        attacker = FastGradientMethod(model, back='tf', sess=sess)
+        attacker = FastGradientMethod(model, back='tf', model_type=model_type, num_classes=nb_classes, sess=sess)
         attack_params = {'eps': eps}
     elif attack == ATTACK_MADRYETAL:
         print('Attack: MadryEtAl')
         from cleverhans.attacks import MadryEtAl
-        attacker = MadryEtAl(model, back='tf', sess=sess)
+        attacker = MadryEtAl(model, back='tf', model_type=model_type, num_classes=nb_classes, sess=sess)
         attack_params = {'eps': eps, 'eps_iter': 0.01, 'nb_iter': nb_iter}
     elif attack == ATTACK_BASICITER:
         print('Attack: BasicIterativeMethod')
         from cleverhans.attacks import BasicIterativeMethod
-        attacker = BasicIterativeMethod(model, back='tf', sess=sess)
+        attacker = BasicIterativeMethod(model, back='tf', model_type=model_type, num_classes=nb_classes, sess=sess)
         attack_params = {'eps': eps, 'eps_iter': 0.01, 'nb_iter': nb_iter}
     else:
         print("Attack undefined")
@@ -359,11 +507,17 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
     else:
         print("Evaluating untargeted results")
         if viz_enabled:
-            adv_accuracy = model_eval(sess, x, y, preds, adv_np, Y_test[
-                idxs], phase=phase, args=eval_params)
+            if ensembleThree:
+                adv_accuracy = model_eval_ensemble(sess, x, y, preds, adv_np, Y_test[idxs], phase=phase, args=eval_params)
+            else: #default below
+                adv_accuracy = model_eval(sess, x, y, preds, adv_np, Y_test[
+                    idxs], phase=phase, args=eval_params)
         else:
-            adv_accuracy = model_eval(sess, x, y, preds, adv_np, Y_test[
-                :nb_samples], phase=phase, args=eval_params)
+            if ensembleThree:
+                adv_accuracy = model_eval_ensemble(sess, x, y, preds, adv_np, Y_test[:nb_samples], phase=phase, args=eval_params)
+            else: #default below
+                adv_accuracy = model_eval(sess, x, y, preds, adv_np, Y_test[
+                    :nb_samples], phase=phase, args=eval_params)
 
     if viz_enabled:
         n = nb_classes - 1
@@ -435,6 +589,24 @@ def main(argv=None):
                  debug=FLAGS.debug,
                  test=FLAGS.test,
                  data_dir=FLAGS.data_dir,
+                 lowprecision=FLAGS.lowprecision,
+                 abits=FLAGS.abits,
+                 wbits=FLAGS.wbits,
+                 abitsList=FLAGS.abitsList,
+                 wbitsList=FLAGS.wbitsList,
+                 abits2=FLAGS.abits2,
+                 wbits2=FLAGS.wbits2,
+                 abits2List=FLAGS.abits2List,
+                 wbits2List=FLAGS.wbits2List,
+                 stocRound=FLAGS.stocRound,
+                 model_path1=FLAGS.model_path1,
+                 model_path2=FLAGS.model_path2,
+                 model_path3=FLAGS.model_path3,
+                 ensembleThree=FLAGS.ensembleThree,
+                 distill = FLAGS.distill,
+                 inpgradreg = FLAGS.inpgradreg,
+                 l2dbl = FLAGS.l2dbl,
+                 l2cs = FLAGS.l2cs,
                  delay=FLAGS.delay,
                  adv=FLAGS.adv,
                  nb_iter=FLAGS.nb_iter)
@@ -482,7 +654,30 @@ if __name__ == '__main__':
                      default=10, help='Nb of inputs to attack')
     par.add_argument(
         '--targeted', help='Run a targeted attack?', action="store_true")
-
+    
+    # EMPIR specific flags
+    par.add_argument('--lowprecision', help='Use other low precision models absed on DoReFa net', action="store_true") # For DoReFa net style quantization
+    par.add_argument('--wbits', type=int, default=0, help='No. of bits in weight representation')
+    par.add_argument('--abits', type=int, default=0, help='No. of bits in activation representation')
+    par.add_argument('--wbitsList', type=int, nargs='+', help='List of No. of bits in weight representation for different layers')
+    par.add_argument('--abitsList', type=int, nargs='+', help='List of No. of bits in activation representation for different layers')
+    par.add_argument('--stocRound', help='Stochastic rounding for weights (only in training) and activations?',
+                     action="store_true")
+    par.add_argument('--model_path1', help='Path where saved model1 is stored and can be loaded')
+    par.add_argument('--model_path2', help='Path where saved model2 is stored and can be loaded')
+    par.add_argument('--model_path3', help='Path where saved model3 is stored and can be loaded')
+    par.add_argument('--ensembleThree', help='Use an ensemble of full precision and two low precision models', action="store_true") 
+    par.add_argument('--wbits2', type=int, default=0, help='No. of bits in weight representation of model2, model1 specified using wbits')
+    par.add_argument('--abits2', type=int, default=0, help='No. of bits in activation representation of model2, model2 specified using abits')
+    par.add_argument('--wbits2List', type=int, nargs='+', help='List of No. of bits in weight representation for different layers of model2')
+    par.add_argument('--abits2List', type=int, nargs='+', help='List of No. of bits in activation representation for different layers of model2')
+    # extra flags for defensive distillation
+    par.add_argument('--distill', help='Train the model using distillation', action="store_true") 
+    par.add_argument('--student_epochs', type=int, default=50, help='No. of epochs for which the student model is trained')
+    # extra flags for input gradient regularization
+    par.add_argument('--inpgradreg', help='Train the model using input gradient regularization', action="store_true") 
+    par.add_argument('--l2dbl', type=int, default=0, help='l2 double backprop penalty')
+    par.add_argument('--l2cs', type=int, default=0, help='l2 certainty sensitivity penalty')
     # Adversarial training flags
     par.add_argument(
         '--adv', help='Adversarial training type?', type=int, default=0)

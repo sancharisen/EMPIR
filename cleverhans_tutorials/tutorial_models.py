@@ -907,6 +907,176 @@ def make_scaled_binary_rand_cnn(phase, logits_scalar, detail, nb_filters=64, nb_
     print('Finished making basic binary cnn')
     return model
 
+# distilled model
+def make_distilled_cnn(phase, temperature, detail1, detail2, nb_filters=64, nb_classes=10, input_shape=(None, 28, 28, 1)):
+    # make one teacher low precision cnn with wbits precision weights and abits activations
+    teacher_layers = [Conv2D(False, nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail1 + 'conv1'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail1 + 'conv2_bin'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail1 + 'conv3_bin'),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail1),
+              Softmax(temperature)] # Hard probs (default)
+    # make one student low precision cnn with wbits precision weights and abits activations
+    student_layers = [Conv2D(False, nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail2 + 'conv1'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail2 + 'conv2'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail2 + 'conv3'),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail2),
+              Softmax(temperature)] # Hard probs (default)
+
+    model = distilledModel(teacher_layers, student_layers, input_shape)
+    print('Finished making a distilled cnn')
+
+    return model
+
+################## low precision version of mnist cnn #################
+def make_basic_lowprecision_cnn(phase, temperature, detail, wbits, abits, nb_filters=64, nb_classes=10,
+                          input_shape=(None, 28, 28, 1), useBatchNorm=False, stocRound=False):
+
+    layers = [Conv2D_lowprecision(wbits, abits, nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail + 'conv1', useBatchNorm=useBatchNorm, stocRound=stocRound),
+              ReLU(),
+              Conv2D_lowprecision(wbits, abits, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail + 'conv2_bin', useBatchNorm=useBatchNorm, stocRound=stocRound),
+              ReLU(),
+              Conv2D_lowprecision(wbits, abits, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail + 'conv3_bin', useBatchNorm=useBatchNorm, stocRound=stocRound),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail), 
+              Softmax(temperature)]
+
+    model = MLP(layers, input_shape)
+    print('Finished making basic low precision cnn: %d weight bits, %d activation bits' %(wbits, abits))
+    return model
+
+# Variant of low precision supporting different precisions for different layers
+def make_layerwise_lowprecision_cnn(phase, temperature, detail, wbits, abits, nb_filters=64, 
+            nb_classes=10, input_shape=(None, 28, 28, 1), 
+            useBatchNorm=False, stocRound=False):
+    layers = [Conv2D_lowprecision(wbits[0], abits[0], nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail + 'conv1', useBatchNorm=useBatchNorm, stocRound=stocRound),
+              ReLU(),
+              Conv2D_lowprecision(wbits[1], abits[1], nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail + 'conv2_bin', useBatchNorm=useBatchNorm, stocRound=stocRound),
+              ReLU(),
+              Conv2D_lowprecision(wbits[2], abits[2], nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail + 'conv3_bin', useBatchNorm=useBatchNorm, stocRound=stocRound),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail),
+              Softmax(temperature)]
+
+    model = MLP(layers, input_shape)
+    print('Finished making layerwise low precision cnn: %d %d %d weight bits, %d %d %d activation bits' %(wbits[0], wbits[1], wbits[2], abits[0], abits[1], abits[2]))
+    return model
+
+
+################## EMPIR version of mnist cnn #################
+def make_ensemble_three_cnn(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=64, nb_classes=10, input_shape=(None, 28, 28, 1), useBatchNorm=False):
+    # make one low precision cnn with wbits precision weights and abits activations
+    layers1 = [Conv2D_lowprecision(wbits1, abits1, nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail1 + 'conv1', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits1, abits1, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail1 + 'conv2_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits1, abits1, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail1 + 'conv3_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail1),
+              Softmax(temperature)]
+    # make another low precision cnn with wbits precision weights and abits activations
+    layers2 = [Conv2D_lowprecision(wbits2, abits2, nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail2 + 'conv1', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits2, abits2, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail2 + 'conv2_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits2, abits2, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail2 + 'conv3_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail2),
+              Softmax(temperature)]
+
+    # make a full precision cnn with full precision weights and a bits activations
+    layers3 = [Conv2D(False, nb_filters, (8, 8), (2, 2), "SAME", phase, detail3 + 'conv1'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail3 + 'conv2'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail3 + 'conv3'),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail3),
+              Softmax(temperature)]
+
+    model = ensembleThreeModel(layers1, layers2, layers3, input_shape, nb_classes)
+    print('Finished making ensemble of three cnns')
+
+    return model
+
+def make_ensemble_three_cnn_layerwise(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=64, nb_classes=10, input_shape=(None, 28, 28, 1), useBatchNorm=False):
+    # make one low precision cnn with wbits precision weights and abits activations
+    layers1 = [Conv2D_lowprecision(wbits1[0], abits1[0], nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail1 + 'conv1', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits1[1], abits1[1], nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail1 + 'conv2_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits1[2], abits1[2], nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail1 + 'conv3_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail1),
+              Softmax(temperature)]
+    # make another low precision cnn with wbits precision weights and abits activations
+    layers2 = [Conv2D_lowprecision(wbits2[0], abits2[0], nb_filters, (8, 8),
+                     (2, 2), "SAME", phase, detail2 + 'conv1', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits2[1], abits2[1], nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail2 + 'conv2_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Conv2D_lowprecision(wbits2[2], abits2[2], nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail2 + 'conv3_bin', useBatchNorm=useBatchNorm),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail2),
+              Softmax(temperature)]
+
+    # make a full precision cnn with full precision weights and a bits activations
+    layers3 = [Conv2D(False, nb_filters, (8, 8), (2, 2), "SAME", phase, detail3 + 'conv1'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (6, 6),
+                     (2, 2), "VALID", phase, detail3 + 'conv2'),
+              ReLU(),
+              Conv2D(False, nb_filters * 2, (5, 5),
+                     (1, 1), "VALID", phase, detail3 + 'conv3'),
+              ReLU(),
+              Flatten(),
+              Linear(nb_classes, detail3),
+              Softmax(temperature)]
+
+    model = combinedThreeModel(layers1, layers2, layers3, input_shape, avg, weightedAvg, alpha, nb_classes)
+    print('Finished making ensemble of three cnns')
+
+    return model
+
 ################# full-precision cifar cnn ############################
 def make_basic_cifar_cnn(phase, temperature, detail, nb_filters=32, nb_classes=10,
                    input_shape=(None, 28, 28, 1)):
@@ -1072,7 +1242,7 @@ def make_ensemble_three_cifar_cnn(phase, temperature, detail1, detail2, detail3,
               Softmax(temperature)]
 
     model = ensembleThreeModel(layers1, layers2, layers3, input_shape, nb_classes)
-    print('Finished making three combined cnn')
+    print('Finished making ensemble of three cnns')
 
     return model
 

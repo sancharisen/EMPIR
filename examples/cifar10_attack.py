@@ -512,7 +512,7 @@ def main(argv=None):
 
     if attack == ATTACK_CARLINI_WAGNER_L2:
         from cleverhans.attacks import CarliniWagnerL2
-        attacker = CarliniWagnerL2(model, back='tf', model_type=model_type, sess=sess)
+        attacker = CarliniWagnerL2(model, back='tf', model_type=model_type, num_classes=nb_classes, sess=sess)
         attack_params = {'binary_search_steps': 1,
                          'max_iterations': attack_iterations,
                          'learning_rate': 0.1,
@@ -521,15 +521,19 @@ def main(argv=None):
                          }
     elif attack == ATTACK_JSMA:
         from cleverhans.attacks import SaliencyMapMethod
-        attacker = SaliencyMapMethod(model, back='tf', model_type=model_type, sess=sess)
+        attacker = SaliencyMapMethod(model, back='tf', model_type=model_type, sess=sess, num_classes=nb_classes)
         attack_params = {'theta': 1., 'gamma': 0.1}
     elif attack == ATTACK_FGSM:
         from cleverhans.attacks import FastGradientMethod
-        attacker = FastGradientMethod(model, back='tf', model_type=model_type, sess=sess)
+        attacker = FastGradientMethod(model, back='tf', model_type=model_type, sess=sess, num_classes=nb_classes)
         attack_params = {'eps': eps}
     elif attack == ATTACK_MADRYETAL:
         from cleverhans.attacks import MadryEtAl
-        attacker = MadryEtAl(model, back='tf', model_type=model_type, sess=sess)
+        attacker = MadryEtAl(model, back='tf', model_type=model_type, sess=sess, num_classes=nb_classes)
+        attack_params = {'eps': eps, 'eps_iter': 0.01, 'nb_iter': nb_iter}
+    elif attack == ATTACK_BASICITER:
+        from cleverhans.attacks import BasicIterativeMethod
+        attacker = BasicIterativeMethod(model, back='tf', sess=sess, model_type=model_type, num_classes=nb_classes)
         attack_params = {'eps': eps, 'eps_iter': 0.01, 'nb_iter': nb_iter}
     else:
         print("Attack undefined")
