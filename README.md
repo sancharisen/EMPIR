@@ -1,4 +1,4 @@
-# CleverHans (latest release: v2.0.0) for evaluating robustness of ensembles of mixed precision DNN models
+# CleverHans_EMPIR for evaluating robustness of ensembles of mixed precision DNN models
 
 <img src="https://github.com/tensorflow/cleverhans/blob/master/assets/logo.png?raw=true" alt="cleverhans logo">
 
@@ -25,10 +25,10 @@ currently open.
         <th rowspan="2">Dataset</th><th rowspan="2">Ensemble Type</th><th colspan=3>Precisions</th><th rowspan=2>Unperturbed Accuracy</th><th colspan=4>Adversarial Accuracy</th>
     </tr>
     <tr>
-        <th>Model 1</th><th>Model 2</th><td>Model 3</th><th>CW</th><th>FGSM</th><th>BIM</th><th>PGD</th>
+        <th>Model 1</th><th>Model 2</th><th>Model 3</th><th>CW</th><th>FGSM</th><th>BIM</th><th>PGD</th>
     </tr>
     <tr>
-       <td>MNIST</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
+       <td>MNIST</td><td> </td><td> <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
     </tr>
     <tr>
        <td>CIFAR-10</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
