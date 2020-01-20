@@ -26,16 +26,16 @@ currently open.
     </tr>
     <tr>
         <td> </td><td> </td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td><td>CW</td><td>FGSM</td><td>BIM</td><td>PGD</td>
-    <\tr>
+    </tr>
     <tr>
        <td>MNIST</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
-    <\tr>
+    </tr>
     <tr>
        <td>CIFAR-10</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
-    <\tr>
+    </tr>
     <tr>
        <td>ImageNet</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
-    <\tr>
+    </tr>
 </table>
 
 ## Setting up CleverHans
