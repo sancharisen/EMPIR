@@ -26,10 +26,10 @@ currently open.
 |  :---:  |     :---:     |              :---:            |       :---:          |             :---:           |             
 <table>
     <tr>
-        <td>Dataset<\td>
-    <\tr>
+        <td>Dataset</td><td>Ensemble Type</td><td colspan=3>Precisions</td><td>Unperturbed Accuracy</td>
+    </tr>
     <tr>
-        <td>MNIST<\td>
+        <td>MNIST</td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td>
     <\tr>
 </table>
 
