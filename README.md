@@ -22,7 +22,7 @@ currently open.
 ## Results
 <table>
     <tr>
-        <strong><td>Dataset</td><td>Ensemble Type</td><td colspan=3>Precisions</td><td>Unperturbed Accuracy</td><td colspan=3>Adversarial Accuracy</td></strong>
+        <td>Dataset</td><td>Ensemble Type</td><td colspan=3>Precisions</td><td>Unperturbed Accuracy</td><td colspan=4>Adversarial Accuracy</td></strong>
     </tr>
     <tr>
         <td> </td><td> </td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td><td>CW</td><td>FGSM</td><td>BIM</td><td>PGD</td>
