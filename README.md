@@ -20,7 +20,7 @@ currently open.
 + `examples/cifar10_attack` - white-box CIFAR-10 attacks
 
 ## Results
-<table>
+<table align="center">
     <tr>
         <th rowspan="2">Dataset</th>
         <th rowspan="2">Ensemble Type</th>
@@ -40,38 +40,38 @@ currently open.
     <tr>
        <td>MNIST</td>
        <td> </td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
     </tr>
     <tr>
        <td>CIFAR-10</td>
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
     </tr>
     <tr>
        <td>ImageNet</td>
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
-       <td> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
     </tr>
 </table>
 
