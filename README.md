@@ -20,7 +20,7 @@ currently open.
 + `examples/cifar10_attack` - white-box CIFAR-10 attacks
 
 ## Results
-| Dataset | Ensemble Type |            Precisions        || Unperturbed Accuracy |     Adversarial Accuracy    |
+| Dataset | Ensemble Type ||           Precisions        || Unperturbed Accuracy |     Adversarial Accuracy    |
 |  :---:  |     :---:     |              :---:            |       :---:          |             :---:           |
 |         |               |  Model 1  | Model 2 | Model 3 |                      |  CW  | FGSM |  PGD  |  BIM  |
 |  :---:  |     :---:     |              :---:            |       :---:          |             :---:           |             
