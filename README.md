@@ -29,7 +29,16 @@ currently open.
         <td>Dataset</td><td>Ensemble Type</td><td colspan=3>Precisions</td><td>Unperturbed Accuracy</td>
     </tr>
     <tr>
-        <td>MNIST</td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td>
+        <td> </td><td> </td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td>
+    <\tr>
+    <tr>
+       <td>MNIST</td><td> </td><td> </td><td> </td><td> </td><td> </td>
+    <\tr>
+    <tr>
+       <td>CIFAR-10</td><td> </td><td> </td><td> </td><td> </td><td> </td>
+    <\tr>
+    <tr>
+       <td>ImageNet</td><td> </td><td> </td><td> </td><td> </td><td> </td>
     <\tr>
 </table>
 
