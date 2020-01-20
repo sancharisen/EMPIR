@@ -20,25 +20,21 @@ currently open.
 + `examples/cifar10_attack` - white-box CIFAR-10 attacks
 
 ## Results
-| Dataset | Ensemble Type |            Precisions         | Unperturbed Accuracy |     Adversarial Accuracy    |
-|  :---:  |     :---:     |              :---:            |       :---:          |             :---:           |
-|         |               |  Model 1  | Model 2 | Model 3 |                      |  CW  | FGSM |  PGD  |  BIM  |
-|  :---:  |     :---:     |              :---:            |       :---:          |             :---:           |             
 <table>
     <tr>
-        <td>Dataset</td><td>Ensemble Type</td><td colspan=3>Precisions</td><td>Unperturbed Accuracy</td>
+        <th><td>Dataset</td><td>Ensemble Type</td><td colspan=3>Precisions</td><td>Unperturbed Accuracy</td><td colspan=3>Adversarial Accuracy</td></th>
     </tr>
     <tr>
-        <td> </td><td> </td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td>
+        <td> </td><td> </td><td>Model 1</td><td>Model 2</td><td>Model 3</td><td> </td><td>CW</td><td>FGSM</td><td>BIM</td><td>PGD</td>
     <\tr>
     <tr>
-       <td>MNIST</td><td> </td><td> </td><td> </td><td> </td><td> </td>
+       <td>MNIST</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
     <\tr>
     <tr>
-       <td>CIFAR-10</td><td> </td><td> </td><td> </td><td> </td><td> </td>
+       <td>CIFAR-10</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
     <\tr>
     <tr>
-       <td>ImageNet</td><td> </td><td> </td><td> </td><td> </td><td> </td>
+       <td>ImageNet</td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td><td> </td>
     <\tr>
 </table>
 
