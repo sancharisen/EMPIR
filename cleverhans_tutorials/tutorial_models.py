@@ -1072,7 +1072,7 @@ def make_ensemble_three_cnn_layerwise(phase, temperature, detail1, detail2, deta
               Linear(nb_classes, detail3),
               Softmax(temperature)]
 
-    model = combinedThreeModel(layers1, layers2, layers3, input_shape, avg, weightedAvg, alpha, nb_classes)
+    model = ensembleThreeModel(layers1, layers2, layers3, input_shape, avg, weightedAvg, alpha, nb_classes)
     print('Finished making ensemble of three cnns')
 
     return model
