@@ -20,15 +20,15 @@ currently open.
 + `examples/cifar10_attack` - white-box CIFAR-10 attacks
 
 ## Results
-<table align="center">
-    <tr>
+<table>
+    <tr> align="center"
         <th rowspan="2">Dataset</th>
         <th rowspan="2">Ensemble Type</th>
         <th colspan=3>Precisions</th>
         <th rowspan=2>Unperturbed Accuracy</th>
         <th colspan=4>Adversarial Accuracy</th>
     </tr>
-    <tr>
+    <tr align="center">
         <th>Model 1</th>
         <th>Model 2</th>
         <th>Model 3</th>
@@ -37,7 +37,7 @@ currently open.
         <th>BIM</th>
         <th>PGD</th>
     </tr>
-    <tr>
+    <tr align="center">
        <td>MNIST</td>
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
@@ -49,7 +49,7 @@ currently open.
        <td> 100 </td>
        <td> 100 </td>
     </tr>
-    <tr>
+    <tr align="center">
        <td>CIFAR-10</td>
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
@@ -61,7 +61,7 @@ currently open.
        <td> 100 </td>
        <td> 100 </td>
     </tr>
-    <tr>
+    <tr align="center">
        <td>ImageNet</td>
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
