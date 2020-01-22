@@ -177,8 +177,6 @@ def main(argv=None):
 
     model_path = FLAGS.model_path
     targeted = True if FLAGS.targeted else False
-    binary = True if FLAGS.binary else False
-    scale = True if FLAGS.scale else False
     learning_rate = FLAGS.learning_rate
     nb_filters = FLAGS.nb_filters
     batch_size = FLAGS.batch_size
@@ -227,28 +225,19 @@ def main(argv=None):
         if os.path.exists(model_path):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
-                binary, scale, nb_filters, batch_size, learning_rate, nb_epochs, adv = parse_model_settings(
+                nb_filters, batch_size, learning_rate, nb_epochs, adv = parse_model_settings(
                     model_path)
                 train_from_scratch = False
             else:
                 model_path = build_model_save_path(
-                    model_path, binary, batch_size, nb_filters, learning_rate, nb_epochs, adv, delay, scale)
+                    model_path, batch_size, nb_filters, learning_rate, nb_epochs, adv, delay)
                 print(model_path)
                 save = True
                 train_from_scratch = True
     else:
         train_from_scratch = True  # train from scratch, but don't save since no path given
 
-    if binary:
-        if scale:
-            from cleverhans_tutorials.tutorial_models import make_scaled_binary_cnn
-            model = make_scaled_binary_cnn(phase, 'bin_', input_shape=(
-                None, img_rows, img_cols, channels), nb_filters=nb_filters)
-        else:
-            from cleverhans_tutorials.tutorial_models import make_basic_binary_cnn
-            model = make_basic_binary_cnn(phase, 'bin_', input_shape=(
-                None, img_rows, img_cols, channels), nb_filters=nb_filters)
-    elif ensembleThree: # For trainable version of combined model with both high and low precision
+    if ensembleThree: 
        if (wbitsList is None) or (abitsList is None): # Layer wise separate quantization not specified for first model
            if (wbits==0) or (abits==0):
                print("Error: the number of bits for constant precision weights and activations across layers for the first model have to specified using wbits1 and abits1 flags")
@@ -360,7 +349,6 @@ def main(argv=None):
 
     # Train an CIFAR10 model
     train_params = {
-        'binary': binary,
         'nb_epochs': nb_epochs,
         'batch_size': batch_size,
         'learning_rate': learning_rate,
@@ -410,7 +398,6 @@ def main(argv=None):
             print('Test accuracy of the teacher model on legitimate examples: %0.4f' % teacher_acc)
             print('Training the student model...')
             student_train_params = {
-                'binary': binary,
                 'nb_epochs': student_epochs,
                 'batch_size': batch_size,
                 'learning_rate': learning_rate,
@@ -634,10 +621,6 @@ if __name__ == '__main__':
                      help='Size of training batches')
     par.add_argument('--learning_rate', type=float, default=0.001,
                      help='Learning rate')
-    par.add_argument('--binary', help='Use a binary model?',
-                     action="store_true")
-    par.add_argument('--scale', help='Scale activations of the binary model?',
-                     action="store_true")
     par.add_argument('--rand', help='Stochastic weight layer?',
                      action="store_true")
 
@@ -667,11 +650,10 @@ if __name__ == '__main__':
     par.add_argument('--wbitsList', type=int, nargs='+', help='List of No. of bits in weight representation for different layers')
     par.add_argument('--abitsList', type=int, nargs='+', help='List of No. of bits in activation representation for different layers')
     par.add_argument('--stocRound', help='Stochastic rounding for weights (only in training) and activations?', action="store_true")
-    par.add_argument('--useSeparateSeed', help='Using a seed other than the default set_random_seed for initializing the lowprecision model', action="store_true") 
     par.add_argument('--seed', type=int, default=1, help='Setting a seed other than the default set_random_seed for initializing the lowprecision model') 
     par.add_argument('--model_path1', help='Path where saved model1 is stored and can be loaded')
     par.add_argument('--model_path2', help='Path where saved model2 is stored and can be loaded')
-    par.add_argument('--ensembleThree', help='Use a combined version of full precision and two low precision models that can be attacked directly', action="store_true") 
+    par.add_argument('--ensembleThree', help='Use an ensemble of full precision and two low precision models that can be attacked directly', action="store_true") 
     par.add_argument('--model_path3', help='Path where saved model3 in case of combinedThree model is stored and can be loaded')
     par.add_argument('--wbits2', type=int, default=0, help='No. of bits in weight representation of model2, model1 specified using wbits')
     par.add_argument('--abits2', type=int, default=0, help='No. of bits in activation representation of model2, model2 specified using abits')

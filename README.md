@@ -25,8 +25,8 @@ currently open.
         <th rowspan="2">Dataset</th>
         <th rowspan="2">Ensemble Type</th>
         <th colspan=3>Precisions</th>
-        <th rowspan=2>Unperturbed Accuracy</th>
-        <th colspan=4>Adversarial Accuracy</th>
+        <th rowspan=2>Unperturbed Accuracy (%)</th>
+        <th colspan=4>Adversarial Accuracy (%)</th>
     </tr>
     <tr align="center">
         <th>Model 1</th>

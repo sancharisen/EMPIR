@@ -1227,7 +1227,7 @@ class MadryEtAl(Attack):
         import tensorflow as tf
         from cleverhans.utils_tf import clip_eta
 
-        eta = tf.random_uniform(tf.shape(x), -self.eps, self.eps)
+        eta = tf.random_uniform(tf.shape(x), -self.eps, self.eps, seed=1237)
         eta = clip_eta(eta, self.ord, self.eps)
 
         if self.y is not None:

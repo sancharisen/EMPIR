@@ -287,8 +287,6 @@ def parse_model_settings(model_path):
             start_index = tokens.index(p)
             precision = p
     try:
-        binary = True if precision == 'bin' or precision == 'binsc' else False
-        scale = True if precision == 'binsc' else False
         nb_filters = int(tokens[start_index + 1].split('_')[1])
         batch_size = int(tokens[start_index + 2].split('_')[1])
         learning_rate = float(tokens[start_index + 3].split('_')[1])
@@ -307,13 +305,11 @@ def parse_model_settings(model_path):
         print("Could not parse tokens!")
         sys.exit(1)
 
-    return binary, scale, nb_filters, batch_size, learning_rate, nb_epochs, adv
+    return nb_filters, batch_size, learning_rate, nb_epochs, adv
 
 
-def build_model_save_path(root_path, binary, batch_size, nb_filters, lr, epochs, adv, delay, scale):
+def build_model_save_path(root_path, batch_size, nb_filters, lr, epochs, adv, delay):
 
-    precision = 'bin' if binary else 'fp'
-    precision += 'sc/' if scale else '/'
     model_path = os.path.join(root_path, precision)
     model_path += 'k_' + str(nb_filters) + '/'
     model_path += 'bs_' + str(batch_size) + '/'

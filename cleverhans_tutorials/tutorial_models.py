@@ -13,6 +13,8 @@ from cleverhans.model import Model
 
 BN_EPSILON = 1e-5
 
+## For alexnet's local response normalization 
+RADIUS = 2; ALPHA = 2E-05; BETA = 0.75; BIAS = 1.0 # values copied from myalexnet_forward_newtf.py
 
 @tf.RegisterGradient("QuantizeGrad")
 def quantize_grad(op, grad):
@@ -333,8 +335,7 @@ class SimpleLinear(Layer):
 
 class Linear(Layer):
 
-    # def __init__(self, num_hid, scope_name):
-    def __init__(self, num_hid, detail):
+    def __init__(self, num_hid, detail, useBias=False):
         self.__dict__.update(locals())
         # self.num_hid = num_hid
 
@@ -348,12 +349,17 @@ class Linear(Layer):
             batch_size, dim = input_shape
             self.input_shape = [batch_size, dim]
             self.output_shape = [batch_size, self.num_hid]
+            if self.useBias:
+                self.bias_shape = self.num_hid
             init = tf.random_normal([dim, self.num_hid], dtype=tf.float32)
             init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init), axis=0,
                                                        keep_dims=True))
             self.W = tf.get_variable(
                 "W", initializer=init)
             W_summ = tf.summary.histogram('W', values=self.W)
+            if self.useBias:
+                bias_init = tf.zeros(self.bias_shape)
+                self.bias =tf.get_variable("b", initializer= bias_init)
 
     def fprop(self, x, reuse):
 
@@ -362,6 +368,8 @@ class Linear(Layer):
         with tf.variable_scope(self.detail + self.name + '_fprop', reuse):
 
             x = tf.matmul(x, self.W)  # + self.b
+            if self.useBias:
+                x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
             a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
             a_summ = tf.summary.histogram('a', values=x)
             a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
@@ -412,9 +420,80 @@ class HiddenLinear(Layer):
 
             return x
 
+class HiddenLinear_lowprecision(Layer):
+
+    # def __init__(self, num_hid, scope_name):
+    def __init__(self, wbits, abits, num_hid, scope_name, useBias=False):
+        self.__dict__.update(locals())
+
+    def quantize(self, x, k): ## k= No. of quantized bits
+        n = float(2**k-1) ## Max value representable with k bits
+        
+        @tf.custom_gradient ## Can be used to define a custom gradient function
+        def _quantize(x):
+            return tf.round(x*n)/n, lambda dy: dy # Second part is the function evaluated during gradient, identity function
+
+        return _quantize(x) 
+
+    def quantizeWt(self, x):
+        x = tf.tanh(x) ## Normalizing weights to [-1, 1]
+        x = x/tf.reduce_max(abs(x))*0.5 + 0.5 ## Normalizing weights to [0, 1]
+        return 2*self.quantize(x, self.wbits) - 1 ## Normalizing back to [0, 1] after quantizing
+    
+    def quantizeAct(self, x):
+        x = tf.clip_by_value(x, 0, 1.0) ## Normalizing activations to [0, 1] --> performed in nonlin(x) function of alexnet-dorefa.py
+        return self.quantize(x, self.abits)
+
+    def set_input_shape(self, input_shape, reuse):
+
+        with tf.variable_scope(self.scope_name+ 'init', reuse): # this works
+        # with black box, but now can't load checkpoints from wb
+        # this works with white-box
+        # with tf.variable_scope(self.detail + self.name + '_init', reuse):
+
+            batch_size, dim = input_shape
+            self.input_shape = [batch_size, dim]
+            self.output_shape = [batch_size, self.num_hid]
+            
+            if self.useBias:
+                self.bias_shape = self.num_hid
+            init = tf.random_normal([dim, self.num_hid], dtype=tf.float32)
+            init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init), axis=0,
+                                                   keep_dims=True))
+            self.W = tf.get_variable(
+                "W", initializer=init)
+            
+            if (self.wbits < 32):  
+                self.W = self.quantizeWt(self.W)
+            
+            if self.useBias:
+                bias_init = tf.zeros(self.bias_shape)
+                self.bias =tf.get_variable("b", initializer= bias_init)
+
+            W_summ = tf.summary.histogram('W', values=self.W)
+
+    def fprop(self, x, reuse):
+
+        with tf.variable_scope(self.scope_name + '_fprop', reuse):
+        # this works with white-box
+        # with tf.variable_scope(self.detail + self.name + '_fprop', reuse):
+            if self.abits < 32:
+                x = self.quantizeAct(x)
+
+            x = tf.matmul(x, self.W)  # + self.b
+            if self.useBias:
+                x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
+
+            a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
+            a_summ = tf.summary.histogram('a', values=x)
+            a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
+            a_v_summ = tf.summary.scalar("a_v", tf.reduce_mean(a_v))
+
+            return x
+
 class Conv2DRand(Layer):
 
-    def __init__(self, binary, output_channels, kernel_shape, strides, padding, phase, scope_name):
+    def __init__(self, output_channels, kernel_shape, strides, padding, phase, scope_name):
         self.__dict__.update(locals())
         self.G = tf.get_default_graph()
         del self.self
@@ -443,16 +522,10 @@ class Conv2DRand(Layer):
             k_summ = tf.summary.histogram(
                 name="k", values=self.kernels)
 
-            if self.binary:
-                from tensorflow.contrib.distributions import Bernoulli
-                with self.G.gradient_override_map({"Bernoulli": "QuantizeGrad"}):
-                    self.kernels = 2. * Bernoulli(probs=hard_sigmoid(
-                        self.kernels), dtype=tf.float32).sample() - 1.
-            else:
-                from tensorflow.contrib.distributions import MultivariateNormalDiag
-                with self.G.gradient_override_map({"MultivariateNormalDiag": "QuantizeGrad"}):
-                    self.kernels = MultivariateNormalDiag(
-                        loc=self.kernels).sample()
+            from tensorflow.contrib.distributions import MultivariateNormalDiag
+            with self.G.gradient_override_map({"MultivariateNormalDiag": "QuantizeGrad"}):
+                self.kernels = MultivariateNormalDiag(
+                    loc=self.kernels).sample()
 
             k_rand_summ = tf.summary.histogram(
                 name="k_rand", values=self.kernels)
@@ -472,12 +545,6 @@ class Conv2DRand(Layer):
         # variables internally
         with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
 
-            if self.binary:
-                # center input to quantization op
-                x = tf.contrib.layers.batch_norm(
-                    x, epsilon=BN_EPSILON, is_training=self.phase,
-                    reuse=reuse, scope=scope)
-                x = self.quantize(x)
             x = tf.nn.conv2d(x, self.kernels, (1,) +
                              tuple(self.strides) + (1,), self.padding)
             a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
@@ -490,7 +557,7 @@ class Conv2DRand(Layer):
 
 class Conv2D(Layer):
 
-    def __init__(self, binary, output_channels, kernel_shape, strides, padding, phase, scope_name):
+    def __init__(self, output_channels, kernel_shape, strides, padding, phase, scope_name, useBias=False):
         self.__dict__.update(locals())
         self.G = tf.get_default_graph()
         del self.self
@@ -509,31 +576,32 @@ class Conv2D(Layer):
 
         with tf.variable_scope(self.scope_name + '_init', reuse):
 
-            if self.binary:
-                init = tf.truncated_normal(
-                    kernel_shape, stddev=0.2, dtype=tf.float32)
-            else:
-                init = tf.truncated_normal(
-                    kernel_shape, stddev=0.1, dtype=tf.float32)
-                init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init),
+            init = tf.truncated_normal(
+                kernel_shape, stddev=0.1, dtype=tf.float32)
+            init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init),
                                                            axis=(0, 1, 2)))
             self.kernels = tf.get_variable("k", initializer=init)
             k_summ = tf.summary.histogram(
                 name="k", values=self.kernels)
 
-            if self.binary:
-                self.kernels = self.quantize(self.kernels)
-                k_bin_summ = tf.summary.histogram(
-                    name="k_bin", values=self.kernels)
-
             orig_input_batch_size = input_shape[0]
             input_shape = list(input_shape)
             input_shape[0] = 1
             dummy_batch = tf.zeros(input_shape)
-            dummy_output = self.fprop(dummy_batch, False)
+            # Set output shape using fprop without bias if useBias set 
+            if self.useBias:
+                dummy_output = self.fprop_withoutbias(dummy_batch, False)
+            else: #--default below
+                dummy_output = self.fprop(dummy_batch, False)
+
             output_shape = [int(e) for e in dummy_output.get_shape()]
             output_shape[0] = 1
             self.output_shape = tuple(output_shape)
+            
+            if self.useBias:
+                self.bias_shape = self.output_shape
+                bias_init = tf.zeros(self.bias_shape)
+                self.bias =tf.get_variable("b", initializer= bias_init)
 
     def fprop(self, x, reuse):
 
@@ -541,12 +609,28 @@ class Conv2D(Layer):
         # variables internally
         with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
 
-            if self.binary:
-                # center input to quantization op
-                x = tf.contrib.layers.batch_norm(
-                    x, epsilon=BN_EPSILON, is_training=self.phase,
-                    reuse=reuse, scope=scope)
-                x = self.quantize(x)
+            x = tf.nn.conv2d(x, self.kernels, (1,) +
+                             tuple(self.strides) + (1,), self.padding)
+
+            if self.useBias:
+                output_shape = tf.shape(x) # Checking output shape before bias
+                x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
+                x = tf.reshape(x, output_shape)
+
+            a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
+            a_summ = tf.summary.histogram('a', values=x)
+            a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
+            a_v_summ = tf.summary.scalar("a_v", tf.reduce_mean(a_v))
+
+            return x
+    
+    # special function without bias to get output shape
+    def fprop_withoutbias(self, x, reuse):
+
+        # need variable_scope here because the batch_norm layer creates
+        # variables internally
+        with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
+
             x = tf.nn.conv2d(x, self.kernels, (1,) +
                              tuple(self.strides) + (1,), self.padding)
             a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
@@ -686,6 +770,227 @@ class Conv2D_lowprecision(Layer):
 
             return x
 
+class Conv2DGroup(Layer):
+
+    def __init__(self, output_channels, kernel_shape, strides, padding, phase, scope_name):
+        self.__dict__.update(locals())
+        self.G = tf.get_default_graph()
+        del self.self
+
+    def quantize(self, x):
+        with self.G.gradient_override_map({"Sign": "QuantizeGrad"}):
+            return tf.sign(x)
+
+    def set_input_shape(self, input_shape, reuse):
+
+        self.input_shape = input_shape 
+        batch_size, rows, cols, input_channels = input_shape
+        self.input_channels = input_channels
+        kernel_shape = tuple(self.kernel_shape) + (int(input_channels/2),
+                                                   self.output_channels) # as it is 2 groups, input channel dimension is halved
+        assert len(kernel_shape) == 4
+        assert all(isinstance(e, int) for e in kernel_shape), kernel_shape
+
+        with tf.variable_scope(self.scope_name + '_init', reuse):
+
+            init = tf.variance_scaling_initializer(scale=2., dtype=tf.float32)
+            self.kernels = tf.get_variable("k", shape=kernel_shape, initializer=init)
+            k_summ = tf.summary.histogram(
+                name="k", values=self.kernels)
+
+            orig_input_batch_size = input_shape[0]
+            input_shape = list(input_shape)
+            input_shape[0] = 1
+            dummy_batch = tf.zeros(input_shape)
+            dummy_output = self.fprop_withoutbias(dummy_batch, False)
+            output_shape = [int(e) for e in dummy_output.get_shape()]
+            output_shape[0] = 1
+            self.output_shape = tuple(output_shape)
+
+            # setting bias shape
+            self.bias_shape = self.output_shape
+
+            # initializing bias
+            bias_init = tf.zeros(self.bias_shape)
+            self.bias =tf.get_variable("b", initializer= bias_init)
+
+
+    def fprop(self, x, reuse):
+
+        # need variable_scope here because the batch_norm layer creates
+        # variables internally
+        with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
+
+            ### groupwise convolution
+            x1 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.input_channels/2, tf.int32)]), tf.slice(self.kernels, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.output_channels/2, tf.int32)]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x2 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, tf.cast(self.input_channels/2, tf.int32)], [-1, -1, -1, -1]), tf.slice(self.kernels, [0, 0, 0, (tf.cast(self.output_channels/2, tf.int32))], [-1, -1, -1, -1]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x = tf.concat([x1, x2], 3)
+            output_shape = tf.shape(x) # Checking output shape before bias
+            
+            # adding bias
+            x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
+            if self.padding=="SAME": # Padding same means input and output size equal
+                x = tf.reshape(x, output_shape)
+
+            a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
+            a_summ = tf.summary.histogram('a', values=x)
+            a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
+            a_v_summ = tf.summary.scalar("a_v", tf.reduce_mean(a_v))
+
+            return x
+    
+    # Special function without bias to get output shape
+    def fprop_withoutbias(self, x, reuse):
+
+        # need variable_scope here because the batch_norm layer creates
+        # variables internally
+        with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
+
+            ### groupwise convolution
+            x1 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.input_channels/2, tf.int32)]), tf.slice(self.kernels, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.output_channels/2, tf.int32)]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x2 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, tf.cast(self.input_channels/2, tf.int32)], [-1, -1, -1, -1]), tf.slice(self.kernels, [0, 0, 0, (tf.cast(self.output_channels/2, tf.int32))], [-1, -1, -1, -1]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x = tf.concat([x1, x2], 3)
+            
+            a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
+            a_summ = tf.summary.histogram('a', values=x)
+            a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
+            a_v_summ = tf.summary.scalar("a_v", tf.reduce_mean(a_v))
+
+            return x
+
+class Conv2DGroup_lowprecision(Layer):
+
+    def __init__(self, wbits, abits, output_channels, kernel_shape, strides, padding, phase, scope_name, seed=1, useBatchNorm=False, stocRound=False, useBias=False):
+        self.__dict__.update(locals())
+        self.G = tf.get_default_graph()
+        del self.self
+
+    def quantize(self, x, k): ## k= No. of quantized bits
+        n = float(2**k-1) ## Max value representable with k bits
+        
+        @tf.custom_gradient ## Can be used to define a custom gradient function
+        def _quantize(x):
+            if self.stocRound: # If stochastic rounding is set
+                xn_int = tf.floor(x*n) # Get integer part
+                xn_frac = tf.subtract(x*n, xn_int) # Get fractional part
+                xn_frac_rand = tf.distributions.Bernoulli(probs=xn_frac, dtype=tf.float32).sample() # Get random number from bernoulli distribution with prob=fractional part value
+                x_q = (xn_int + xn_frac_rand)/n
+                
+                return x_q, lambda dy: dy # Second part is the function evaluated during gradient, identity function
+            else:
+                return tf.round(x*n)/n, lambda dy: dy # Second part is the function evaluated during gradient, identity function
+
+        return _quantize(x) 
+
+    def quantizeWt(self, x):
+        x = tf.tanh(x) ## Normalizing weights to [-1, 1]
+        x = x/tf.reduce_max(abs(x))*0.5 + 0.5 ## Normalizing weights to [0, 1]
+        return 2*self.quantize(x, self.wbits) - 1 ## Normalizing back to [0, 1] after quantizing
+    
+    def quantizeAct(self, x):
+        x = tf.clip_by_value(x, 0, 1.0) ## Normalizing activations to [0, 1] --> performed in nonlin(x) function of alexnet-dorefa.py
+        return self.quantize(x, self.abits)
+
+    def set_input_shape(self, input_shape, reuse):
+
+        self.input_shape = input_shape 
+        batch_size, rows, cols, input_channels = input_shape
+        self.input_channels = input_channels
+        kernel_shape = tuple(self.kernel_shape) + (int(input_channels/2),
+                                                   self.output_channels) # as it is 2 groups, input channel dimension is halved
+        assert len(kernel_shape) == 4
+        assert all(isinstance(e, int) for e in kernel_shape), kernel_shape
+
+        with tf.variable_scope(self.scope_name + '_init', reuse):
+
+            if self.wbits < 32:
+                init = tf.truncated_normal(
+                    kernel_shape, stddev=0.2, dtype=tf.float32)
+                self.kernels = tf.get_variable("k", initializer=init)
+            else:
+                init = tf.truncated_normal(
+                    kernel_shape, stddev=0.1, dtype=tf.float32)
+                init = init / tf.sqrt(1e-7 + tf.reduce_sum(tf.square(init),
+                                                           axis=(0, 1, 2)))
+                self.kernels = tf.get_variable("k", initializer=init)
+
+            if (self.wbits < 32): ## Quantize if no. of bits less than 32
+                self.kernels = self.quantizeWt(self.kernels)
+                k_bin_summ = tf.summary.histogram(
+                    name="k_bin", values=self.kernels)
+            k_summ = tf.summary.histogram(
+                name="k", values=self.kernels)
+
+            orig_input_batch_size = input_shape[0]
+            input_shape = list(input_shape)
+            input_shape[0] = 1
+            dummy_batch = tf.zeros(input_shape)
+            # Set output shape using fprop without bias if useBias set 
+            if self.useBias:
+                dummy_output = self.fprop_withoutbias(dummy_batch, False)
+            else: #--default below
+                dummy_output = self.fprop(dummy_batch, False)
+            output_shape = [int(e) for e in dummy_output.get_shape()]
+            output_shape[0] = 1
+            self.output_shape = tuple(output_shape)
+
+            self.bias_shape = self.output_shape
+
+            if self.useBias:
+                bias_init = tf.zeros(self.bias_shape)
+                self.bias =tf.get_variable("b", initializer= bias_init)
+                if self.wbits < 32: ## Quantize if no. of bits less than 32
+                    self.bias =self.quantizeWt(self.bias)
+
+
+    def fprop(self, x, reuse):
+        with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
+
+            if self.abits < 32:
+                if self.useBatchNorm: ## Specifies whether we want to use Batch Normalization or not
+                    x = tf.contrib.layers.batch_norm(
+                        x, epsilon=BN_EPSILON, is_training=self.phase,
+                        reuse=reuse, scope=scope)
+                x = self.quantizeAct(x)
+            ### groupwise convolution
+            x1 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.input_channels/2, tf.int32)]), tf.slice(self.kernels, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.output_channels/2, tf.int32)]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x2 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, tf.cast(self.input_channels/2, tf.int32)], [-1, -1, -1, -1]), tf.slice(self.kernels, [0, 0, 0, (tf.cast(self.output_channels/2, tf.int32))], [-1, -1, -1, -1]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x = tf.concat([x1, x2], 3)
+            
+            if self.useBias:
+                output_shape = tf.shape(x) # Checking output shape before bias
+                x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
+                if self.padding=="SAME": # Padding same means input and output size equal
+                    x = tf.reshape(x, output_shape)
+
+            a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
+            a_summ = tf.summary.histogram('a', values=x)
+            a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
+            a_v_summ = tf.summary.scalar("a_v", tf.reduce_mean(a_v))
+
+            return x
+    
+    # Special function without bias to get output shape
+    def fprop_withoutbias(self, x, reuse):
+        with tf.variable_scope(self.scope_name + '_fprop', reuse=reuse) as scope:
+
+            if self.abits < 32:
+                if self.useBatchNorm: ## Specifies whether we want to use Batch Normalization or not
+                    x = tf.contrib.layers.batch_norm(
+                        x, epsilon=BN_EPSILON, is_training=self.phase,
+                        reuse=reuse, scope=scope)
+                x = self.quantizeAct(x)
+            ### groupwise convolution
+            x1 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.input_channels/2, tf.int32)]), tf.slice(self.kernels, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.output_channels/2, tf.int32)]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x2 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, tf.cast(self.input_channels/2, tf.int32)], [-1, -1, -1, -1]), tf.slice(self.kernels, [0, 0, 0, (tf.cast(self.output_channels/2, tf.int32))], [-1, -1, -1, -1]), (1,) + tuple(self.strides) + (1,), self.padding)
+            x = tf.concat([x1, x2], 3)
+            
+            a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
+            a_summ = tf.summary.histogram('a', values=x)
+            a_u_summ = tf.summary.scalar("a_u", tf.reduce_mean(a_u))
+            a_v_summ = tf.summary.scalar("a_v", tf.reduce_mean(a_v))
+
+            return x
 
 class MaxPool(Layer):
     
@@ -706,6 +1011,26 @@ class MaxPool(Layer):
 
     def fprop(self, x, reuse):
         return tf.layers.max_pooling2d(x, self.pool_size, self.strides)
+
+class MaxPoolSame(Layer):
+    
+    def __init__ (self, pool_size, strides):
+        self.pool_size = pool_size
+        self.strides = strides
+        
+    def set_input_shape(self, input_shape, reuse):
+        self.input_shape = input_shape
+        orig_input_batch_size = input_shape[0]
+        input_shape = list(input_shape)
+        input_shape[0] = 1
+        dummy_batch = tf.zeros(input_shape)
+        dummy_output = self.fprop(dummy_batch, False)
+        output_shape = [int(e) for e in dummy_output.get_shape()]
+        output_shape[0] = 1
+        self.output_shape = tuple(output_shape)
+
+    def fprop(self, x, reuse):
+        return tf.layers.max_pooling2d(x, self.pool_size, self.strides, padding='same')
 
 class AvgPool(Layer):
     
@@ -806,16 +1131,101 @@ class Flatten(Layer):
     def fprop(self, x, reuse):
         return tf.reshape(x, [-1, self.output_width])
 
+# Local response Norm layer for AlexNet
+class LocalNorm(Layer):
+
+    def __init__(self):
+        self.__dict__.update(locals())
+
+    def set_input_shape(self, shape, reuse):
+        self.input_shape = shape
+        self.output_shape = shape
+
+    def get_output_shape(self):
+        return self.output_shape
+
+    def fprop(self, x, reuse):
+        x = tf.nn.local_response_normalization(x,
+                                               depth_radius=RADIUS,
+                                               alpha=ALPHA,
+                                               beta=BETA,
+                                               bias=BIAS)
+        return x
+
+# BatchNorm layer for low precision alexnet
+class BatchNorm(Layer):
+
+    def __init__(self, phase, scope_name, mean=None, variance=None, scale=None, offset=None):
+        self.__dict__.update(locals())
+
+    def set_input_shape(self, shape, reuse):
+        self.input_shape = shape
+        self.output_shape = shape
+
+    def get_output_shape(self):
+        return self.output_shape
+
+    def fprop(self, x, reuse):
+       
+        # Batch normalization for the training phase
+        if (self.mean is None) and (self.variance is None) and (self.scale is None) and (self.offset is None):
+            with tf.variable_scope(self.scope_name, reuse=tf.AUTO_REUSE): # Adding scope here to help in restoring variables, Saves and restores model 
+                x = tf.layers.batch_normalization(x, training=self.phase)
+        else:
+            x = tf.nn.batch_normalization(
+                    x, mean=self.mean, variance=self.variance, 
+                    scale=self.scale, offset=self.offset, variance_epsilon=BN_EPSILON)
+        return x
+
+## dropout layer for alexnet
+class DropOut(Layer):
+
+    def __init__(self, keep_prob, phase):
+        self.__dict__.update(locals())
+        self.G = tf.get_default_graph()
+        del self.self
+
+    def set_input_shape(self, shape, reuse):
+        self.input_shape = shape
+        self.output_shape = shape
+
+    def get_output_shape(self):
+        return self.output_shape
+
+    def fprop(self, x, reuse):
+        return tf.cond(self.phase, lambda: tf.nn.dropout(x, self.keep_prob), lambda: tf.identity(x)) # Dropout during training phase but not during test phase
+
+# Padding layers for full precision alexnet
+class ZeroPad(Layer):
+
+    def __init__(self):
+        pass
+
+    def set_input_shape(self, shape, reuse):
+        self.input_shape = shape
+        input_shape = list(self.input_shape)
+        input_shape[0] = 1
+        dummy_batch = tf.zeros(input_shape)
+        dummy_output = self.fprop(dummy_batch, False)
+        output_shape = [int(e) for e in dummy_output.get_shape()]
+        output_shape[0] = 1
+        self.output_shape = tuple(output_shape)
+
+    def get_output_shape(self):
+        return self.output_shape
+
+    def fprop(self, x, reuse):
+        return tf.pad(x, [[0,0], [2, 2], [2, 2], [0, 0]]) # Pad two zeros before and after the rows and columns 
 
 ######################### full-precision #########################
 def make_basic_cnn(phase, temperature, detail, nb_filters=64, nb_classes=10,
                    input_shape=(None, 28, 28, 1)):
-    layers = [Conv2D(False, nb_filters, (8, 8), (2, 2), "SAME", phase, detail + 'conv1'),
+    layers = [Conv2D(nb_filters, (8, 8), (2, 2), "SAME", phase, detail + 'conv1'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (6, 6),
+              Conv2D(nb_filters * 2, (6, 6),
                      (2, 2), "VALID", phase, detail + 'conv2'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "VALID", phase, detail + 'conv3'),
               ReLU(),
               Flatten(),
@@ -829,12 +1239,12 @@ def make_basic_cnn(phase, temperature, detail, nb_filters=64, nb_classes=10,
 
 def make_scaled_rand_cnn(phase, temperature, detail, nb_filters=64, nb_classes=10,
                          input_shape=(None, 28, 28, 1)):
-    layers = [Conv2D(False, nb_filters, (8, 8), (2, 2), "SAME", phase, detail + 'conv1'),
+    layers = [Conv2D(nb_filters, (8, 8), (2, 2), "SAME", phase, detail + 'conv1'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (6, 6),
+              Conv2D(nb_filters * 2, (6, 6),
                      (2, 2), "VALID", phase, detail + 'conv2'),
               ReLU(),
-              Conv2DRand(False, nb_filters * 2, (5, 5),
+              Conv2DRand(nb_filters * 2, (5, 5),
                          (1, 1), "VALID", phase, detail + 'conv3'),
               SReLU(detail + 'srelu3_fp'),
               Flatten(),
@@ -845,91 +1255,29 @@ def make_scaled_rand_cnn(phase, temperature, detail, nb_filters=64, nb_classes=1
     print('Finished making basic cnn')
     return model
 
-######################### binary #########################
-
-
-def make_basic_binary_cnn(phase, temperature, detail, nb_filters=64, nb_classes=10,
-                          input_shape=(None, 28, 28, 1)):
-    layers = [Conv2D(False, nb_filters, (8, 8),
-                     (2, 2), "SAME", phase, detail + 'conv1'),
-              ReLU(),
-              Conv2D(True, nb_filters * 2, (6, 6),
-                     (2, 2), "VALID", phase, detail + 'conv2_bin'),
-              ReLU(),
-              Conv2D(True, nb_filters * 2, (5, 5),
-                     (1, 1), "VALID", phase, detail + 'conv3_bin'),
-              ReLU(),
-              Flatten(),
-              Linear(nb_classes, detail),
-              Softmax(temperature)]
-
-    model = MLP(layers, input_shape)
-    print('Finished making basic binary cnn')
-    return model
-
-
-def make_scaled_binary_cnn(phase, temperature, detail, nb_filters=64, nb_classes=10,
-                           input_shape=(None, 28, 28, 1)):
-    layers = [Conv2D(False, nb_filters, (8, 8),
-                     (2, 2), "SAME", phase, detail + 'conv1'),
-              ReLU(),
-              Conv2D(True, nb_filters * 2, (6, 6),
-                     (2, 2), "VALID", phase, detail + 'conv2_bin'),
-              SReLU(detail + 'srelu2_bin'),
-              Conv2D(True, nb_filters * 2, (5, 5),
-                     (1, 1), "VALID", phase, detail + 'conv3_bin'),
-              SReLU(detail + 'srelu3_bin'),
-              Flatten(),
-              Linear(nb_classes, detail),
-              Softmax(temperature)]
-
-    model = MLP(layers, input_shape)
-    print('Finished making basic binary cnn')
-    return model
-
-
-def make_scaled_binary_rand_cnn(phase, logits_scalar, detail, nb_filters=64, nb_classes=10,
-                                input_shape=(None, 28, 28, 1)):
-    layers = [Conv2D(False, nb_filters, (8, 8),
-                     (2, 2), "SAME", phase, detail + 'conv1'),
-              ReLU(),
-              Conv2D(True, nb_filters * 2, (6, 6),
-                     (2, 2), "VALID", phase, detail + 'conv2_bin'),
-              SReLU(detail + 'srelu2_bin'),
-              Conv2DRand(True, nb_filters * 2, (5, 5),
-                         (1, 1), "VALID", phase, detail + 'conv3_bin'),
-              SReLU(detail + 'srelu3_bin'),
-              Flatten(),
-              Linear(nb_classes, detail),
-              Softmax(logits_scalar)]
-
-    model = MLP(layers, input_shape)
-    print('Finished making basic binary cnn')
-    return model
-
 # distilled model
 def make_distilled_cnn(phase, temperature, detail1, detail2, nb_filters=64, nb_classes=10, input_shape=(None, 28, 28, 1)):
     # make one teacher low precision cnn with wbits precision weights and abits activations
-    teacher_layers = [Conv2D(False, nb_filters, (8, 8),
+    teacher_layers = [Conv2D(nb_filters, (8, 8),
                      (2, 2), "SAME", phase, detail1 + 'conv1'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (6, 6),
+              Conv2D(nb_filters * 2, (6, 6),
                      (2, 2), "VALID", phase, detail1 + 'conv2_bin'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "VALID", phase, detail1 + 'conv3_bin'),
               ReLU(),
               Flatten(),
               Linear(nb_classes, detail1),
               Softmax(temperature)] # Hard probs (default)
     # make one student low precision cnn with wbits precision weights and abits activations
-    student_layers = [Conv2D(False, nb_filters, (8, 8),
+    student_layers = [Conv2D(nb_filters, (8, 8),
                      (2, 2), "SAME", phase, detail2 + 'conv1'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (6, 6),
+              Conv2D(nb_filters * 2, (6, 6),
                      (2, 2), "VALID", phase, detail2 + 'conv2'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "VALID", phase, detail2 + 'conv3'),
               ReLU(),
               Flatten(),
@@ -1014,12 +1362,12 @@ def make_ensemble_three_cnn(phase, temperature, detail1, detail2, detail3, wbits
               Softmax(temperature)]
 
     # make a full precision cnn with full precision weights and a bits activations
-    layers3 = [Conv2D(False, nb_filters, (8, 8), (2, 2), "SAME", phase, detail3 + 'conv1'),
+    layers3 = [Conv2D(nb_filters, (8, 8), (2, 2), "SAME", phase, detail3 + 'conv1'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (6, 6),
+              Conv2D(nb_filters * 2, (6, 6),
                      (2, 2), "VALID", phase, detail3 + 'conv2'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "VALID", phase, detail3 + 'conv3'),
               ReLU(),
               Flatten(),
@@ -1060,12 +1408,12 @@ def make_ensemble_three_cnn_layerwise(phase, temperature, detail1, detail2, deta
               Softmax(temperature)]
 
     # make a full precision cnn with full precision weights and a bits activations
-    layers3 = [Conv2D(False, nb_filters, (8, 8), (2, 2), "SAME", phase, detail3 + 'conv1'),
+    layers3 = [Conv2D(nb_filters, (8, 8), (2, 2), "SAME", phase, detail3 + 'conv1'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (6, 6),
+              Conv2D(nb_filters * 2, (6, 6),
                      (2, 2), "VALID", phase, detail3 + 'conv2'),
               ReLU(),
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "VALID", phase, detail3 + 'conv3'),
               ReLU(),
               Flatten(),
@@ -1080,14 +1428,14 @@ def make_ensemble_three_cnn_layerwise(phase, temperature, detail1, detail2, deta
 ################# full-precision cifar cnn ############################
 def make_basic_cifar_cnn(phase, temperature, detail, nb_filters=32, nb_classes=10,
                    input_shape=(None, 28, 28, 1)):
-    layers = [Conv2D(False, nb_filters, (5, 5), (1, 1), "SAME", phase, detail + 'conv1'),  
+    layers = [Conv2D(nb_filters, (5, 5), (1, 1), "SAME", phase, detail + 'conv1'),  
               MaxPool((3, 3), (2, 2)), 
               ReLU(),
-              Conv2D(False, nb_filters, (5, 5),
+              Conv2D(nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), 
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "SAME", phase, detail + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), 
@@ -1103,14 +1451,14 @@ def make_basic_cifar_cnn(phase, temperature, detail, nb_filters=32, nb_classes=1
 ################## distilled version of cifar cnn #################
 def make_distilled_cifar_cnn(phase, temperature, detail1, detail2, nb_filters=32, nb_classes=10,
                    input_shape=(None, 28, 28, 1)):
-    teacher_layers = [Conv2D(False, nb_filters, (5, 5), (1, 1), "SAME", phase, detail1 + 'conv1'),  
+    teacher_layers = [Conv2D(nb_filters, (5, 5), (1, 1), "SAME", phase, detail1 + 'conv1'),  
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
-              Conv2D(False, nb_filters, (5, 5),
+              Conv2D(nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail1 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "SAME", phase, detail1 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
@@ -1119,14 +1467,14 @@ def make_distilled_cifar_cnn(phase, temperature, detail1, detail2, nb_filters=32
               Linear(nb_classes, detail1),
               Softmax(temperature)]
     
-    student_layers = [Conv2D(False, nb_filters, (5, 5), (1, 1), "SAME", phase, detail2 + 'conv1'),  
+    student_layers = [Conv2D(nb_filters, (5, 5), (1, 1), "SAME", phase, detail2 + 'conv1'),  
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
-              Conv2D(False, nb_filters, (5, 5),
+              Conv2D(nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail2 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "SAME", phase, detail2 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
@@ -1142,17 +1490,17 @@ def make_distilled_cifar_cnn(phase, temperature, detail1, detail2, nb_filters=32
 
 ################## low precision version of cifar cnn #################
 def make_basic_lowprecision_cifar_cnn(phase, temperature, detail, wbits, abits, nb_filters=64, nb_classes=10,
-                          input_shape=(None, 28, 28, 1), useBatchNorm=False, stocRound=False):
+                          input_shape=(None, 28, 28, 1), stocRound=False):
 
-    layers = [Conv2D_lowprecision(wbits, abits, nb_filters, (5, 5), (1, 1), "SAME", phase, detail + 'conv1', useBatchNorm=useBatchNorm, stocRound=stocRound), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers = [Conv2D_lowprecision(wbits, abits, nb_filters, (5, 5), (1, 1), "SAME", phase, detail + 'conv1', stocRound=stocRound), # VALID padding means no padding, SAME means padding by (k-1)/2 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
               Conv2D_lowprecision(wbits, abits, nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail + 'conv2', useBatchNorm=useBatchNorm, stocRound=stocRound),
+                     (1, 1), "SAME", phase, detail + 'conv2', stocRound=stocRound),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride              
               Conv2D_lowprecision(wbits, abits, nb_filters * 2, (5, 5),
-                     (1, 1), "SAME", phase, detail + 'conv3', useBatchNorm=useBatchNorm, stocRound=stocRound),
+                     (1, 1), "SAME", phase, detail + 'conv3', stocRound=stocRound),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride               
               Flatten(),
@@ -1165,17 +1513,17 @@ def make_basic_lowprecision_cifar_cnn(phase, temperature, detail, wbits, abits, 
     return model
 
 def make_layerwise_lowprecision_cifar_cnn(phase, temperature, detail, wbits, abits, nb_filters=64, nb_classes=10,
-                          input_shape=(None, 28, 28, 1), useBatchNorm=False, stocRound=False):
+                          input_shape=(None, 28, 28, 1), stocRound=False):
 
-    layers = [Conv2D_lowprecision(wbits[0], abits[0], nb_filters, (5, 5), (1, 1), "SAME", phase, detail + 'conv1', useBatchNorm=useBatchNorm, stocRound=stocRound), 
+    layers = [Conv2D_lowprecision(wbits[0], abits[0], nb_filters, (5, 5), (1, 1), "SAME", phase, detail + 'conv1', stocRound=stocRound), 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
               Conv2D_lowprecision(wbits[1], abits[1], nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail + 'conv2', useBatchNorm=useBatchNorm, stocRound=stocRound),
+                     (1, 1), "SAME", phase, detail + 'conv2', stocRound=stocRound),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride              
               Conv2D_lowprecision(wbits[2], abits[2], nb_filters * 2, (5, 5),
-                     (1, 1), "SAME", phase, detail + 'conv3', useBatchNorm=useBatchNorm, stocRound=stocRound),
+                     (1, 1), "SAME", phase, detail + 'conv3', stocRound=stocRound),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride               
               Flatten(),
@@ -1188,18 +1536,17 @@ def make_layerwise_lowprecision_cifar_cnn(phase, temperature, detail, wbits, abi
     return model
 
 ################## EMPIR version of cifar cnn #################
-def make_ensemble_three_cifar_cnn(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=32, nb_classes=10,
-                          input_shape=(None, 28, 28, 1), useBatchNorm=False):
+def make_ensemble_three_cifar_cnn(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=32, nb_classes=10, input_shape=(None, 28, 28, 1)):
     # make a low precision cnn with full precision weights and a bits activations
-    layers1 = [Conv2D_lowprecision(wbits1, abits1, nb_filters, (5, 5), (1, 1), "SAME", phase, detail1 + 'conv1', useBatchNorm=useBatchNorm), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers1 = [Conv2D_lowprecision(wbits1, abits1, nb_filters, (5, 5), (1, 1), "SAME", phase, detail1 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
               Conv2D_lowprecision(wbits1, abits1, nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail1 + 'conv2', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail1 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride              ReLU(),
               Conv2D_lowprecision(wbits1, abits1, nb_filters * 2, (5, 5),
-                     (1, 1), "SAME", phase, detail1 + 'conv3', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail1 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride               
               Flatten(),
@@ -1208,15 +1555,15 @@ def make_ensemble_three_cifar_cnn(phase, temperature, detail1, detail2, detail3,
               Softmax(temperature)]
 
     # make a low precision cnn with full precision weights and a bits activations
-    layers2 = [Conv2D_lowprecision(wbits2, abits2, nb_filters, (5, 5), (1, 1), "SAME", phase, detail2 + 'conv1', useBatchNorm=useBatchNorm), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers2 = [Conv2D_lowprecision(wbits2, abits2, nb_filters, (5, 5), (1, 1), "SAME", phase, detail2 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
               Conv2D_lowprecision(wbits2, abits2, nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail2 + 'conv2', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail2 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride              ReLU(),
               Conv2D_lowprecision(wbits2, abits2, nb_filters * 2, (5, 5),
-                     (1, 1), "SAME", phase, detail2 + 'conv3', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail2 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride               
               Flatten(),
@@ -1225,14 +1572,14 @@ def make_ensemble_three_cifar_cnn(phase, temperature, detail1, detail2, detail3,
               Softmax(temperature)]
 
     # make a full precision cnn with full precision weights and a bits activations
-    layers3 = [Conv2D(False, nb_filters, (5, 5), (1, 1), "SAME", phase, detail3 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers3 = [Conv2D(nb_filters, (5, 5), (1, 1), "SAME", phase, detail3 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
-              Conv2D(False, nb_filters, (5, 5),
+              Conv2D(nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail3 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "SAME", phase, detail3 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
@@ -1247,17 +1594,17 @@ def make_ensemble_three_cifar_cnn(phase, temperature, detail1, detail2, detail3,
     return model
 
 def make_ensemble_three_cifar_cnn_layerwise(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=32, nb_classes=10,
-                          input_shape=(None, 28, 28, 1), useBatchNorm=False):
+                          input_shape=(None, 28, 28, 1)):
     # make a low precision cnn with full precision weights and a bits activations
-    layers1 = [Conv2D_lowprecision(wbits1[0], abits1[0], nb_filters, (5, 5), (1, 1), "SAME", phase, detail1 + 'conv1', useBatchNorm=useBatchNorm), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers1 = [Conv2D_lowprecision(wbits1[0], abits1[0], nb_filters, (5, 5), (1, 1), "SAME", phase, detail1 + 'conv1'), 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
               Conv2D_lowprecision(wbits1[1], abits1[1], nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail1 + 'conv2', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail1 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride              ReLU(),
               Conv2D_lowprecision(wbits1[2], abits1[2], nb_filters * 2, (5, 5),
-                     (1, 1), "SAME", phase, detail1 + 'conv3', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail1 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride               
               Flatten(),
@@ -1266,15 +1613,15 @@ def make_ensemble_three_cifar_cnn_layerwise(phase, temperature, detail1, detail2
               Softmax(temperature)]
 
     # make a low precision cnn with full precision weights and a bits activations
-    layers2 = [Conv2D_lowprecision(wbits2[0], abits2[0], nb_filters, (5, 5), (1, 1), "SAME", phase, detail2 + 'conv1', useBatchNorm=useBatchNorm), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers2 = [Conv2D_lowprecision(wbits2[0], abits2[0], nb_filters, (5, 5), (1, 1), "SAME", phase, detail2 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
               Conv2D_lowprecision(wbits2[1], abits2[1], nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail2 + 'conv2', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail2 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride              ReLU(),
               Conv2D_lowprecision(wbits2[2], abits2[2], nb_filters * 2, (5, 5),
-                     (1, 1), "SAME", phase, detail2 + 'conv3', useBatchNorm=useBatchNorm),
+                     (1, 1), "SAME", phase, detail2 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride               
               Flatten(),
@@ -1283,14 +1630,14 @@ def make_ensemble_three_cifar_cnn_layerwise(phase, temperature, detail1, detail2
               Softmax(temperature)]
 
     # make a full precision cnn with full precision weights and a bits activations
-    layers3 = [Conv2D(False, nb_filters, (5, 5), (1, 1), "SAME", phase, detail3 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
+    layers3 = [Conv2D(nb_filters, (5, 5), (1, 1), "SAME", phase, detail3 + 'conv1'), # VALID padding means no padding, SAME means padding by (k-1)/2 
               MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               ReLU(),
-              Conv2D(False, nb_filters, (5, 5),
+              Conv2D(nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail3 + 'conv2'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
-              Conv2D(False, nb_filters * 2, (5, 5),
+              Conv2D(nb_filters * 2, (5, 5),
                      (1, 1), "SAME", phase, detail3 + 'conv3'),
               ReLU(),
               AvgPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
@@ -1301,5 +1648,326 @@ def make_ensemble_three_cifar_cnn_layerwise(phase, temperature, detail1, detail2
 
     model = ensembleThreeModel(layers1, layers2, layers3, input_shape, avg, weightedAvg, alpha, nb_classes)
     print('Finished making ensemble of three cifar cnns')
+
+    return model
+
+######################### full-precision alexnet for Imagenet #########################
+def make_basic_alexnet_from_scratch(phase, temperature, detail, nb_filters=32, nb_classes=10, 
+                   input_shape=(None, 28, 28, 1)): 
+    layers = [ZeroPad(),
+              Conv2D(3*nb_filters, (11, 11), (4, 4), "VALID", phase, detail + 'conv1', useBias=True), 
+              ReLU(),
+              LocalNorm(),
+              MaxPool((3, 3), (2, 2)), # (2,2) pool size and (2,2) stride
+              Conv2DGroup(False, 3*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail + 'conv2'),
+              ReLU(),
+              LocalNorm(),
+              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
+              Conv2D(8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv3', useBias=True),
+              ReLU(),
+              Conv2DGroup(False, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv4'),
+              ReLU(),
+              Conv2DGroup(False, 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv5'),
+              ReLU(),
+              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
+              Flatten(),
+              HiddenLinear(4096, detail + 'ip1', useBias=True),
+              ReLU(),
+              DropOut(0.5, phase),
+              HiddenLinear(4096, detail + 'ip2', useBias=True), 
+              ReLU(),
+              DropOut(0.5, phase),
+              Linear(nb_classes, detail, useBias=True),
+              Softmax(temperature)]
+
+    model = MLP(layers, input_shape)
+    print('Finished making basic alexnet')
+    return model
+
+################## low precision version of alexnet #################
+def make_basic_lowprecision_alexnet(phase, temperature, detail, wbits, abits, nb_filters=32, nb_classes=10, 
+                   input_shape=(None, 28, 28, 1)):
+    
+    layers = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits, abits, 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail + 'conv2',), # useBatchNorm not set here
+              BatchNorm(phase, detail + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), # pool1 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2D_lowprecision(wbits, abits, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv3'),
+              BatchNorm(phase, detail + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), # pool2 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits, abits, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv4'),
+              BatchNorm(phase, detail + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits, abits, 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv5'),
+              BatchNorm(phase, detail + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(wbits, abits, 4096, detail + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(wbits, abits, 4096, detail + 'ip2'),
+              BatchNorm(phase, detail + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail, useBias=True), # Last layer is not quantized
+              Softmax(temperature)]
+
+    model = MLP(layers, input_shape)
+    print('Finished making basic alexnet of low precision')
+    return model
+
+def make_layerwise_lowprecision_alexnet(phase, temperature, detail, wbits, abits, nb_filters=32, nb_classes=10, 
+                   input_shape=(None, 28, 28, 1)):
+    
+    layers = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits[0], abits[0], 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail + 'conv2'), # useBatchNorm not set here
+              BatchNorm(phase, detail + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), # pool1 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2D_lowprecision(wbits[1], abits[1], 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv3'),
+              BatchNorm(phase, detail + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), # pool2 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits[2], abits[2], 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv4'),
+              BatchNorm(phase, detail + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits[3], abits[3], 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv5'),
+              BatchNorm(phase, detail + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(wbits[4], abits[4], 4096, detail + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(wbits[5], abits[5], 4096, detail + 'ip2'),
+              BatchNorm(phase, detail + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail, useBias=True), # Last layer is not quantized
+              Softmax(temperature)]
+
+    model = MLP(layers, input_shape)
+    print('Finished making layerwise alexnet of low precision')
+    return model
+
+################## EMPIR version of alexnet #################
+def make_ensemble_three_alexnet(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=32, nb_classes=10,
+                          input_shape=(None, 28, 28, 1), useBatchNorm=False):
+    # make a low precision cnn
+    layers1 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail1 + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits1, abits1, 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail1 + 'conv2'), 
+              BatchNorm(phase, detail1 + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2D_lowprecision(wbits1, abits1, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail1 + 'conv3'),
+              BatchNorm(phase, detail1 + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits1, abits1, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail1 + 'conv4'),
+              BatchNorm(phase, detail1 + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits1, abits1, 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail1 + 'conv5'),
+              BatchNorm(phase, detail1 + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), 
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(wbits1, abits1, 4096, detail1 + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail1 + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(wbits1, abits1, 4096, detail1 + 'ip2', useBias=False),
+              BatchNorm(phase, detail1 + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail1, useBias=True), 
+              Softmax(temperature)]
+
+    # make another low precision cnn
+    layers2 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail2 + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits2, abits2, 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail2 + 'conv2'), 
+              BatchNorm(phase, detail2 + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2D_lowprecision(wbits2, abits2, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail2 + 'conv3'),
+              BatchNorm(phase, detail2 + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits2, abits2, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail2 + 'conv4'),
+              BatchNorm(phase, detail2 + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits2, abits2, 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail2 + 'conv5'),
+              BatchNorm(phase, detail2 + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), 
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(wbits2, abits2, 4096, detail2 + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail2 + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(wbits2, abits2, 4096, detail2 + 'ip2', useBias=False),
+              BatchNorm(phase, detail2 + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail2, useBias=True), # Last layer is not quantized
+              Softmax(temperature)]
+
+    # make a full precision cnn with full precision weights and activations
+    layers3 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail3 + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail3 + 'conv2'), 
+              BatchNorm(phase, detail3 + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2D_lowprecision(32, 32, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail3 + 'conv3'),
+              BatchNorm(phase, detail3 + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2DGroup_lowprecision(32, 32, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail3 + 'conv4'),
+              BatchNorm(phase, detail3 + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail3 + 'conv5'),
+              BatchNorm(phase, detail3 + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), 
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail3 + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip2', useBias=False),
+              BatchNorm(phase, detail3 + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail3, useBias=True), 
+              Softmax(temperature)]
+
+    model = ensembleThreeModel(layers1, layers2, layers3, input_shape, nb_classes)
+    print('Finished making ensemble of three cnns')
+
+    return model
+
+def make_ensemble_three_alexnet_layerwise(phase, temperature, detail1, detail2, detail3, wbits1, abits1, wbits2, abits2, nb_filters=32, nb_classes=10,
+                          input_shape=(None, 28, 28, 1)):
+    # make a low precision cnn
+    layers1 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail1 + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits1[0], abits1[0], 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail1 + 'conv2'), 
+              BatchNorm(phase, detail1 + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), # pool1 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2D_lowprecision(wbits1[1], abits1[1], 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail1 + 'conv3'),
+              BatchNorm(phase, detail1 + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), # pool2 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits1[2], abits1[2], 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail1 + 'conv4'),
+              BatchNorm(phase, detail1 + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits1[3], abits1[3], 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail1 + 'conv5'),
+              BatchNorm(phase, detail1 + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(wbits1[4], abits1[4], 4096, detail1 + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail1 + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(wbits1[5], abits1[5], 4096, detail1 + 'ip2'),
+              BatchNorm(phase, detail1 + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail1, useBias=True), # Last layer is not quantized
+              Softmax(temperature)]
+
+    # make another low precision cnn
+    layers2 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail2 + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits2[0], abits2[0], 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail2 + 'conv2'), # useBatchNorm not set here
+              BatchNorm(phase, detail2 + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), # pool1 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2D_lowprecision(wbits2[1], abits2[1], 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail2 + 'conv3'),
+              BatchNorm(phase, detail2 + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), # pool2 (3,3) pool size and (2,2) stride
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits2[2], abits2[2], 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail2 + 'conv4'),
+              BatchNorm(phase, detail2 + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(wbits2[3], abits2[3], 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail2 + 'conv5'),
+              BatchNorm(phase, detail2 + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(wbits2[4], abits2[4], 4096, detail2 + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail2 + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(wbits2[5], abits2[5], 4096, detail2 + 'ip2'),
+              BatchNorm(phase, detail2 + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail2, useBias=True), # Last layer is not quantized
+              Softmax(temperature)]
+
+    # make a full precision cnn with full precision weights and activations
+    layers3 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail3 + 'conv1', useBias=True),
+              ReLU(),
+              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail3 + 'conv2'), 
+              BatchNorm(phase, detail3 + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2D_lowprecision(32, 32, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail3 + 'conv3'),
+              BatchNorm(phase, detail3 + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), 
+              ReLU(),
+              Conv2DGroup_lowprecision(32, 32, 12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail3 + 'conv4'),
+              BatchNorm(phase, detail3 + '_batchNorm3'),
+              ReLU(),
+              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail3 + 'conv5'),
+              BatchNorm(phase, detail3 + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), 
+              ReLU(),
+              Flatten(),
+              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail3 + '_batchNorm5'),
+              ReLU(),
+              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip2', useBias=False),
+              BatchNorm(phase, detail3 + '_batchNorm6'),
+              ReLU(),
+              Linear(nb_classes, detail3, useBias=True), 
+              Softmax(temperature)]
+
+    model = ensembleThreeModel(layers1, layers2, layers3, input_shape, nb_classes)
+    print('Finished making ensemble of three models')
 
     return model

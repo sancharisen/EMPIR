@@ -49,7 +49,7 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
                  nb_samples=10, learning_rate=0.001,
                  eps=0.3, attack=0,
                  attack_iterations=100, model_path=None,
-                 targeted=False, binary=False, scale=False, rand=False,
+                 targeted=False, rand=False,
                  stocRound=False, lowprecision=False,  
                  wbits=0, abits=0, wbitsList=0, abitsList=0, wbits2=0, abits2=0, wbits2List=0, abits2List=0, 
                  ensembleThree=False, model_path1=None, model_path2=None, model_path3=None,
@@ -120,12 +120,12 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
         if os.path.exists(model_path):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
-                binary, scale, nb_filters, batch_size, learning_rate, nb_epochs, adv = parse_model_settings(
+                nb_filters, batch_size, learning_rate, nb_epochs, adv = parse_model_settings(
                     model_path)
                 train_from_scratch = False
             else:
                 model_path = build_model_save_path(
-                    model_path, binary, batch_size, nb_filters, learning_rate, nb_epochs, adv, delay, scale)
+                    model_path, batch_size, nb_filters, learning_rate, nb_epochs, adv, delay)
                 print(model_path)
                 save = True
                 train_from_scratch = True
@@ -133,24 +133,7 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
         train_from_scratch = True  # train from scratch, but don't save since no path given
 
     # Define TF model graph
-    if binary:
-        print('binary=True')
-        if scale:
-            print('scale=True')
-            if rand:
-                print('rand=True')
-                from cleverhans_tutorials.tutorial_models import make_scaled_binary_rand_cnn
-                model = make_scaled_binary_rand_cnn(phase, logits_scalar, 'binsc_', input_shape=(
-                    None, img_rows, img_cols, channels), nb_filters=nb_filters)
-            else:
-                from cleverhans_tutorials.tutorial_models import make_scaled_binary_cnn
-                model = make_scaled_binary_cnn(phase, logits_scalar, 'binsc_', input_shape=(
-                    None, img_rows, img_cols, channels), nb_filters=nb_filters)
-        else:
-            from cleverhans_tutorials.tutorial_models import make_basic_binary_cnn
-            model = make_basic_binary_cnn(
-                phase, logits_scalar, 'bin_', nb_filters=nb_filters)
-    elif ensembleThree: 
+    if ensembleThree: 
        if (wbitsList is None) or (abitsList is None): # Layer wise separate quantization not specified for first model
            if (wbits==0) or (abits==0):
                print("Error: the number of bits for constant precision weights and activations across layers for the first model have to specified using wbits1 and abits1 flags")
@@ -253,7 +236,6 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
 
     # Train an MNIST model
     train_params = {
-        'binary': binary,
         'nb_epochs': nb_epochs,
         'batch_size': batch_size,
         'learning_rate': learning_rate,
@@ -328,7 +310,6 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
             print('Test accuracy of the teacher model on legitimate examples: %0.4f' % teacher_acc)
             print('Training the student model...')
             student_train_params = {
-                'binary': binary,
                 'nb_epochs': 50,
                 'batch_size': batch_size,
                 'learning_rate': learning_rate,
@@ -583,8 +564,6 @@ def main(argv=None):
                  attack_iterations=FLAGS.attack_iterations,
                  model_path=FLAGS.model_path,
                  targeted=FLAGS.targeted,
-                 binary=FLAGS.binary,
-                 scale=FLAGS.scale,
                  rand=FLAGS.rand,
                  debug=FLAGS.debug,
                  test=FLAGS.test,
@@ -637,10 +616,6 @@ if __name__ == '__main__':
                      help='Size of training batches')
     par.add_argument('--lr', type=float, default=0.001,
                      help='Learning rate')
-    par.add_argument('--binary', help='Use a binary model?',
-                     action="store_true")
-    par.add_argument('--scale', help='Scale activations after binarization or sampling weights?',
-                     action="store_true")
     par.add_argument('--rand', help='Stochastic weight layer?',
                      action="store_true")
 
