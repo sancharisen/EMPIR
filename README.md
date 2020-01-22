@@ -11,9 +11,10 @@ benchmark machine learning systems' vulnerability to
 [adversarial examples](http://karpathy.github.io/2015/03/30/breaking-convnets/).
 You can learn more about such vulnerabilities on the accompanying [blog](http://cleverhans.io).
 
-## Ensemble of Mixed Precision Deep Networks for Increased Robustness 
-+ `cleverhans_tutorials/mnist_attack.py` - white-box MNIST attacks
-+ `examples/cifar10_attack` - white-box CIFAR-10 attacks
+## Setting up
++ Install Tensorflow 
++ Git clone this repository
++ Set environment variable PYTHONPATH to path of this repository
 
 ## Results
 <table>
@@ -71,7 +72,9 @@ You can learn more about such vulnerabilities on the accompanying [blog](http://
     </tr>
 </table>
 
-## Setting up CleverHans
+## Example commands
++ `python cleverhans_tutorials/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNIST EMPIR model
++ `python cleverhans_tutorials/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on MNIST baseline model
 
 ### Dependencies
 
