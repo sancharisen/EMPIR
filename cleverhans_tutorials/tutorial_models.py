@@ -772,7 +772,7 @@ class Conv2D_lowprecision(Layer):
 
 class Conv2DGroup(Layer):
 
-    def __init__(self, output_channels, kernel_shape, strides, padding, phase, scope_name):
+    def __init__(self, output_channels, kernel_shape, strides, padding, phase, scope_name, useBias=False):
         self.__dict__.update(locals())
         self.G = tf.get_default_graph()
         del self.self
@@ -802,7 +802,10 @@ class Conv2DGroup(Layer):
             input_shape = list(input_shape)
             input_shape[0] = 1
             dummy_batch = tf.zeros(input_shape)
-            dummy_output = self.fprop_withoutbias(dummy_batch, False)
+            if self.useBias:
+                dummy_output = self.fprop_withoutbias(dummy_batch, False)
+            else: #--default below
+                dummy_output = self.fprop(dummy_batch, False)
             output_shape = [int(e) for e in dummy_output.get_shape()]
             output_shape[0] = 1
             self.output_shape = tuple(output_shape)
@@ -811,8 +814,9 @@ class Conv2DGroup(Layer):
             self.bias_shape = self.output_shape
 
             # initializing bias
-            bias_init = tf.zeros(self.bias_shape)
-            self.bias =tf.get_variable("b", initializer= bias_init)
+            if self.useBias:
+                bias_init = tf.zeros(self.bias_shape)
+                self.bias =tf.get_variable("b", initializer= bias_init)
 
 
     def fprop(self, x, reuse):
@@ -828,9 +832,11 @@ class Conv2DGroup(Layer):
             output_shape = tf.shape(x) # Checking output shape before bias
             
             # adding bias
-            x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
-            if self.padding=="SAME": # Padding same means input and output size equal
-                x = tf.reshape(x, output_shape)
+            if self.useBias:
+                output_shape = tf.shape(x) # Checking output shape before bias
+                x = tf.nn.bias_add(tf.contrib.layers.flatten(x), tf.reshape(self.bias, [-1]))
+                if self.padding=="SAME": # Padding same means input and output size equal
+                    x = tf.reshape(x, output_shape)
 
             a_u, a_v = tf.nn.moments(tf.abs(x), axes=[0], keep_dims=False)
             a_summ = tf.summary.histogram('a', values=x)
@@ -1194,28 +1200,6 @@ class DropOut(Layer):
 
     def fprop(self, x, reuse):
         return tf.cond(self.phase, lambda: tf.nn.dropout(x, self.keep_prob), lambda: tf.identity(x)) # Dropout during training phase but not during test phase
-
-# Padding layers for full precision alexnet
-class ZeroPad(Layer):
-
-    def __init__(self):
-        pass
-
-    def set_input_shape(self, shape, reuse):
-        self.input_shape = shape
-        input_shape = list(self.input_shape)
-        input_shape[0] = 1
-        dummy_batch = tf.zeros(input_shape)
-        dummy_output = self.fprop(dummy_batch, False)
-        output_shape = [int(e) for e in dummy_output.get_shape()]
-        output_shape[0] = 1
-        self.output_shape = tuple(output_shape)
-
-    def get_output_shape(self):
-        return self.output_shape
-
-    def fprop(self, x, reuse):
-        return tf.pad(x, [[0,0], [2, 2], [2, 2], [0, 0]]) # Pad two zeros before and after the rows and columns 
 
 ######################### full-precision #########################
 def make_basic_cnn(phase, temperature, detail, nb_filters=64, nb_classes=10,
@@ -1654,34 +1638,36 @@ def make_ensemble_three_cifar_cnn_layerwise(phase, temperature, detail1, detail2
 ######################### full-precision alexnet for Imagenet #########################
 def make_basic_alexnet_from_scratch(phase, temperature, detail, nb_filters=32, nb_classes=10, 
                    input_shape=(None, 28, 28, 1)): 
-    layers = [ZeroPad(),
-              Conv2D(3*nb_filters, (11, 11), (4, 4), "VALID", phase, detail + 'conv1', useBias=True), 
+
+    layers = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail + 'conv1', useBias=True),
               ReLU(),
-              LocalNorm(),
-              MaxPool((3, 3), (2, 2)), # (2,2) pool size and (2,2) stride
-              Conv2DGroup(False, 3*nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail + 'conv2'),
+              Conv2DGroup(8*nb_filters, (5, 5),
+                     (1, 1), "SAME", phase, detail + 'conv2'), 
+              BatchNorm(phase, detail + '_batchNorm1'),
+              MaxPoolSame((3, 3), (2, 2)), 
               ReLU(),
-              LocalNorm(),
-              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
-              Conv2D(8*nb_filters, (3, 3),
-                     (1, 1), "SAME", phase, detail + 'conv3', useBias=True),
+              Conv2D(12*nb_filters, (3, 3),
+                     (1, 1), "SAME", phase, detail + 'conv3'),
+              BatchNorm(phase, detail + '_batchNorm2'),
+              MaxPoolSame((3, 3), (2, 2)), 
               ReLU(),
-              Conv2DGroup(False, 12*nb_filters, (3, 3),
+              Conv2DGroup(12*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail + 'conv4'),
+              BatchNorm(phase, detail + '_batchNorm3'),
               ReLU(),
-              Conv2DGroup(False, 8*nb_filters, (3, 3),
+              Conv2DGroup(8*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail + 'conv5'),
+              BatchNorm(phase, detail + '_batchNorm4'),
+              MaxPool((3, 3), (2, 2)), 
               ReLU(),
-              MaxPool((3, 3), (2, 2)), # (3,3) pool size and (2,2) stride
               Flatten(),
-              HiddenLinear(4096, detail + 'ip1', useBias=True),
+              HiddenLinear(4096, detail + 'ip1', useBias=True), # first f.c. layer
+              BatchNorm(phase, detail + '_batchNorm5'),
               ReLU(),
-              DropOut(0.5, phase),
-              HiddenLinear(4096, detail + 'ip2', useBias=True), 
+              HiddenLinear(4096, detail + 'ip2', useBias=False),
+              BatchNorm(phase, detail + '_batchNorm6'),
               ReLU(),
-              DropOut(0.5, phase),
-              Linear(nb_classes, detail, useBias=True),
+              Linear(nb_classes, detail, useBias=True), 
               Softmax(temperature)]
 
     model = MLP(layers, input_shape)
@@ -1695,7 +1681,7 @@ def make_basic_lowprecision_alexnet(phase, temperature, detail, wbits, abits, nb
     layers = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail + 'conv1', useBias=True),
               ReLU(),
               Conv2DGroup_lowprecision(wbits, abits, 8*nb_filters, (5, 5),
-                     (1, 1), "SAME", phase, detail + 'conv2',), # useBatchNorm not set here
+                     (1, 1), "SAME", phase, detail + 'conv2'), # useBatchNorm not set here
               BatchNorm(phase, detail + '_batchNorm1'),
               MaxPoolSame((3, 3), (2, 2)), # pool1 (3,3) pool size and (2,2) stride
               ReLU(),
@@ -1835,30 +1821,30 @@ def make_ensemble_three_alexnet(phase, temperature, detail1, detail2, detail3, w
     # make a full precision cnn with full precision weights and activations
     layers3 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail3 + 'conv1', useBias=True),
               ReLU(),
-              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (5, 5),
+              Conv2DGroup(8*nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail3 + 'conv2'), 
               BatchNorm(phase, detail3 + '_batchNorm1'),
               MaxPoolSame((3, 3), (2, 2)), 
               ReLU(),
-              Conv2D_lowprecision(32, 32, 12*nb_filters, (3, 3),
+              Conv2D(12*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail3 + 'conv3'),
               BatchNorm(phase, detail3 + '_batchNorm2'),
               MaxPoolSame((3, 3), (2, 2)), 
               ReLU(),
-              Conv2DGroup_lowprecision(32, 32, 12*nb_filters, (3, 3),
+              Conv2DGroup(12*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail3 + 'conv4'),
               BatchNorm(phase, detail3 + '_batchNorm3'),
               ReLU(),
-              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (3, 3),
+              Conv2DGroup(8*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail3 + 'conv5'),
               BatchNorm(phase, detail3 + '_batchNorm4'),
               MaxPool((3, 3), (2, 2)), 
               ReLU(),
               Flatten(),
-              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip1', useBias=True), # first f.c. layer
+              HiddenLinear(4096, detail3 + 'ip1', useBias=True), # first f.c. layer
               BatchNorm(phase, detail3 + '_batchNorm5'),
               ReLU(),
-              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip2', useBias=False),
+              HiddenLinear(4096, detail3 + 'ip2', useBias=False),
               BatchNorm(phase, detail3 + '_batchNorm6'),
               ReLU(),
               Linear(nb_classes, detail3, useBias=True), 
@@ -1938,30 +1924,30 @@ def make_ensemble_three_alexnet_layerwise(phase, temperature, detail1, detail2, 
     # make a full precision cnn with full precision weights and activations
     layers3 = [Conv2D(3*nb_filters, (12, 12), (4, 4), "VALID", phase, detail3 + 'conv1', useBias=True),
               ReLU(),
-              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (5, 5),
+              Conv2DGroup(8*nb_filters, (5, 5),
                      (1, 1), "SAME", phase, detail3 + 'conv2'), 
               BatchNorm(phase, detail3 + '_batchNorm1'),
               MaxPoolSame((3, 3), (2, 2)), 
               ReLU(),
-              Conv2D_lowprecision(32, 32, 12*nb_filters, (3, 3),
+              Conv2D(12*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail3 + 'conv3'),
               BatchNorm(phase, detail3 + '_batchNorm2'),
               MaxPoolSame((3, 3), (2, 2)), 
               ReLU(),
-              Conv2DGroup_lowprecision(32, 32, 12*nb_filters, (3, 3),
+              Conv2DGroup(12*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail3 + 'conv4'),
               BatchNorm(phase, detail3 + '_batchNorm3'),
               ReLU(),
-              Conv2DGroup_lowprecision(32, 32, 8*nb_filters, (3, 3),
+              Conv2DGroup(8*nb_filters, (3, 3),
                      (1, 1), "SAME", phase, detail3 + 'conv5'),
               BatchNorm(phase, detail3 + '_batchNorm4'),
               MaxPool((3, 3), (2, 2)), 
               ReLU(),
               Flatten(),
-              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip1', useBias=True), # first f.c. layer
+              HiddenLinear(4096, detail3 + 'ip1', useBias=True), # first f.c. layer
               BatchNorm(phase, detail3 + '_batchNorm5'),
               ReLU(),
-              HiddenLinear_lowprecision(32, 32, 4096, detail3 + 'ip2', useBias=False),
+              HiddenLinear(4096, detail3 + 'ip2', useBias=False),
               BatchNorm(phase, detail3 + '_batchNorm6'),
               ReLU(),
               Linear(nb_classes, detail3, useBias=True), 

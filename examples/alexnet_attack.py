@@ -291,7 +291,6 @@ def main(argv=None):
     learning_rate = FLAGS.learning_rate
     nb_filters = FLAGS.nb_filters
     batch_size = FLAGS.batch_size
-    nb_samples = FLAGS.nb_samples
     nb_epochs = FLAGS.nb_epochs
     delay = FLAGS.delay
     eps = FLAGS.eps
@@ -385,12 +384,9 @@ def main(argv=None):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
                 train_from_scratch = False
-                binary, scale, nb_filters, _, learning_rate, nb_epochs, adv = parse_model_settings(
-                    model_path) 
-
             else:
                 model_path = build_model_save_path(
-                    model_path, binary, batch_size, nb_filters, learning_rate, nb_epochs, adv, delay, scale)
+                    model_path, batch_size, nb_filters, learning_rate, nb_epochs, adv, delay)
                 print(model_path)
                 save = True
                 train_from_scratch = True
@@ -570,6 +566,7 @@ def main(argv=None):
             saver2 = tf.train.Saver(variable_dict)
             saver2.restore(sess, tf.train.latest_checkpoint(model_path2))
             # Third 11 variables from path3
+            stored_variables = ['fp_conv1_init/k', 'fp_conv1_init/b', 'fp_conv2_init/k', 'fp_conv3_init/k', 'fp_conv4_init/k', 'fp_conv5_init/k', 'fp_ip1init/W', 'fp_ip1init/b', 'fp_ip2init/W', 'fp_logits_init/W', 'fp_logits_init/b']
             variable_dict = dict(OrderedDict(zip(stored_variables, variables[22:33])))
             saver3 = tf.train.Saver(variable_dict)
             saver3.restore(sess, tf.train.latest_checkpoint(model_path3))
@@ -583,8 +580,9 @@ def main(argv=None):
             variable_dict = dict(OrderedDict(zip(stored_variables, variables[57:81])))
             saver = tf.train.Saver(variable_dict)
             saver.restore(sess, tf.train.latest_checkpoint(model_path2))
-            variable_dict = dict(OrderedDict(zip(stored_variables, variables[81:105])))
             # Final 24 batch norm variables from path1
+            stored_variables = ['fp__batchNorm1/batch_normalization/gamma', 'fp__batchNorm1/batch_normalization/beta', 'fp__batchNorm1/batch_normalization/moving_mean', 'fp__batchNorm1/batch_normalization/moving_variance', 'fp__batchNorm2/batch_normalization/gamma', 'fp__batchNorm2/batch_normalization/beta', 'fp__batchNorm2/batch_normalization/moving_mean', 'fp__batchNorm2/batch_normalization/moving_variance', 'fp__batchNorm3/batch_normalization/gamma', 'fp__batchNorm3/batch_normalization/beta', 'fp__batchNorm3/batch_normalization/moving_mean', 'fp__batchNorm3/batch_normalization/moving_variance', 'fp__batchNorm4/batch_normalization/gamma', 'fp__batchNorm4/batch_normalization/beta', 'fp__batchNorm4/batch_normalization/moving_mean', 'fp__batchNorm4/batch_normalization/moving_variance', 'fp__batchNorm5/batch_normalization/gamma', 'fp__batchNorm5/batch_normalization/beta', 'fp__batchNorm5/batch_normalization/moving_mean', 'fp__batchNorm5/batch_normalization/moving_variance', 'fp__batchNorm6/batch_normalization/gamma', 'fp__batchNorm6/batch_normalization/beta', 'fp__batchNorm6/batch_normalization/moving_mean', 'fp__batchNorm6/batch_normalization/moving_variance']
+            variable_dict = dict(OrderedDict(zip(stored_variables, variables[81:105])))
             saver = tf.train.Saver(variable_dict)
             saver.restore(sess, tf.train.latest_checkpoint(model_path3))
         else: # restoring the model trained using this setup, not a downloaded one
@@ -610,17 +608,11 @@ def main(argv=None):
     ###########################################################################
     # Craft adversarial examples using generic approach
     ###########################################################################
-    # att_batch_size = np.minimum(nb_samples, MAX_BATCH_SIZE)
-    if attack == ATTACK_CARLINI_WAGNER_L2:
-        att_batch_size = np.minimum(nb_samples, batch_size) 
-    else:
-        att_batch_size = np.minimum(nb_samples, MAX_BATCH_SIZE)
     nb_adv_per_sample = 1
     adv_ys = None
     yname = "y"
 
-    print('Crafting ' + str(nb_samples) + ' * ' + str(nb_adv_per_sample) +
-          ' adversarial examples')
+    print('Crafting adversarial examples')
     print("This could take some time ...")
 
     if ensembleThree:
@@ -634,7 +626,7 @@ def main(argv=None):
         attack_params = {'binary_search_steps': 1,
                          'max_iterations': attack_iterations,
                          'learning_rate': 0.1,
-                         'batch_size': att_batch_size,
+                         'batch_size': batch_size,
                          'initial_const': 10,
                          }
     elif attack == ATTACK_JSMA:
@@ -660,11 +652,11 @@ def main(argv=None):
 
     # attack_params.update({'clip_min': 0., 'clip_max': 1.})
     attack_params.update({'clip_min': -2.2, 'clip_max': 2.7}) # Since max and min for imagenet turns out to be around -2.11 and 2.12, gives exact accuracy with eps=0
-    eval_params = {'batch_size': att_batch_size}
+    eval_params = {'batch_size': batch_size}
     '''
     adv_x = attacker.generate(x, phase, **attack_params)
     # Craft adversarial examples using Fast Gradient Sign Method (FGSM)
-    eval_params = {'batch_size': att_batch_size}
+    eval_params = {'batch_size': batch_size}
     X_test_adv, = batch_eval(sess, [x], [adv_x], [adv_inputs], feed={
                              phase: False}, args=eval_params)
     '''
@@ -672,10 +664,10 @@ def main(argv=None):
     print("Evaluating un-targeted results")
     if ensembleThree:
         adv_accuracy = model_eval_ensemble_adv_imagenet(sess, x, y, preds, test_iterator, 
-                        test_x, test_y, phase=phase, args=eval_params, nb_samples=nb_samples, attacker=attacker, attack_params=attack_params)
+                        test_x, test_y, phase=phase, args=eval_params, attacker=attacker, attack_params=attack_params)
     else:
         adv_accuracy = model_eval_adv_imagenet(sess, x, y, preds, test_iterator, 
-                        test_x, test_y, phase=phase, args=eval_params, nb_samples=nb_samples, attacker=attacker, attack_params=attack_params)
+                        test_x, test_y, phase=phase, args=eval_params, attacker=attacker, attack_params=attack_params)
     
     # Compute the number of adversarial examples that were successfully found
     print('Test accuracy on adversarial examples {0:.4f}'.format(adv_accuracy))
@@ -733,8 +725,6 @@ if __name__ == '__main__':
                      help='Attack type, 0=CW, 2=FGSM')
     par.add_argument('--attack_iterations', type=int, default=100,
                      help='Number of iterations to run CW attack; 1000 is good')
-    par.add_argument('--nb_samples', type=int,
-                     default=10, help='Nb of inputs to attack')
     par.add_argument(
         '--targeted', help='Run a targeted attack?', action="store_true")
     # # Adversarial training flags: Default

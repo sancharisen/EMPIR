@@ -225,8 +225,6 @@ def main(argv=None):
         if os.path.exists(model_path):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
-                nb_filters, batch_size, learning_rate, nb_epochs, adv = parse_model_settings(
-                    model_path)
                 train_from_scratch = False
             else:
                 model_path = build_model_save_path(
@@ -615,7 +613,7 @@ if __name__ == '__main__':
     # Architecture and training specific flags
     par.add_argument('--nb_epochs', type=int, default=6,
                      help='Number of epochs to train model')
-    par.add_argument('--nb_filters', type=int, default=64,
+    par.add_argument('--nb_filters', type=int, default=32,
                      help='Number of filters in first layer')
     par.add_argument('--batch_size', type=int, default=128,
                      help='Size of training batches')

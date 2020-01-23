@@ -1136,7 +1136,7 @@ def model_eval_imagenet(sess, x, y, predictions=None, test_iterator=None, X_test
     return accuracy
 
 def model_eval_adv_imagenet(sess, x, y, predictions=None, test_iterator=None, X_test=None, Y_test=None, 
-   phase=None, writer=None, feed=None, attacker=None, args=None, model=None, nb_samples=0, attack_params=None):
+   phase=None, writer=None, feed=None, attacker=None, args=None, model=None, attack_params=None):
     """
     Compute the accuracy of a TF model on some data
     :param sess: TF session to use when training the graph
@@ -1152,7 +1152,6 @@ def model_eval_adv_imagenet(sess, x, y, predictions=None, test_iterator=None, X_
     :param args: dict or argparse `Namespace` object.
                  Should contain `batch_size`
     :param model: (deprecated) if not None, holds model output predictions
-    :param nb_samples: number of adversarial samples to be generated 
     :return: a float with the accuracy value
     """
     args = _FlagsWrapper(args or {})
@@ -1199,8 +1198,6 @@ def model_eval_adv_imagenet(sess, x, y, predictions=None, test_iterator=None, X_
         # Initialize the iterator
         sess.run(test_iterator.initializer)
 
-        # Try feeding new values till atleast nb_samples of adversarials coverered across all batches
-        # nb_samples should be multiple of batch_size
         num_batches = 0
         try:
             while True:
@@ -1321,7 +1318,7 @@ def model_eval_ensemble_imagenet(sess, x, y, predictions=None, test_iterator=Non
     return accuracy
 
 def model_eval_ensemble_adv_imagenet(sess, x, y, predictions=None, test_iterator=None, X_test=None, Y_test=None, phase=None, writer=None,
-               feed=None, attacker=None, args=None, model=None, nb_samples=0, attack_params=None):
+               feed=None, attacker=None, args=None, model=None, attack_params=None):
     """
     Compute the accuracy of a TF model on some data
     :param sess: TF session to use when training the graph
@@ -1378,8 +1375,6 @@ def model_eval_ensemble_adv_imagenet(sess, x, y, predictions=None, test_iterator
         # Initialize the iterator
         sess.run(test_iterator.initializer)
 
-        # Try feeding new values till atleast nb_samples of adversarials coverered across all batches
-        # nb_samples should be multiple of batch_size
         num_batches = 0
         try:
             while True:

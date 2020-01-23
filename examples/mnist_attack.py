@@ -120,8 +120,6 @@ def mnist_attack(train_start=0, train_end=60000, test_start=0,
         if os.path.exists(model_path):
             # check for existing model in immediate subfolder
             if any(f.endswith('.meta') for f in os.listdir(model_path)):
-                nb_filters, batch_size, learning_rate, nb_epochs, adv = parse_model_settings(
-                    model_path)
                 train_from_scratch = False
             else:
                 model_path = build_model_save_path(
