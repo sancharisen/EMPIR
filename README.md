@@ -1,12 +1,9 @@
-# CleverHans_EMPIR for evaluating robustness of ensembles of mixed precision DNN models
-
-<img src="https://github.com/tensorflow/cleverhans/blob/master/assets/logo.png?raw=true" alt="cleverhans logo">
-
+# EMPIR: Ensembles of Mixed Precision Deep Networks for Increased Robustness against Adversarial Attacks
 [![Build Status](https://travis-ci.org/tensorflow/cleverhans.svg?branch=master)](https://travis-ci.org/tensorflow/cleverhans)
 
 This repository contains the source code for the paper EMPIR: Ensembles of Mixed Precision Deep Networks for Increased Robustness against Adversarial Attacks ([Accepted at ICLR 2020](https://openreview.net/forum?id=HJem3yHKwH))
 
-It is based on [CleverHans](), a Python library to
+It is based on [CleverHans](https://github.com/tensorflow/cleverhans) 1.0.0, a Python library to
 benchmark machine learning systems' vulnerability to
 [adversarial examples](http://karpathy.github.io/2015/03/30/breaking-convnets/).
 You can learn more about such vulnerabilities on the accompanying [blog](http://cleverhans.io).
@@ -19,10 +16,12 @@ You can learn more about such vulnerabilities on the accompanying [blog](http://
 We tested this setup on Python X.X, Tensorflow X.X, Ubuntu X.X and a single RTX 2080 Ti GPU 
 
 ## Example commands
-+ `python cleverhans_tutorials/mnist_attack.py --nb_samples=10000 --attack_iterations=50 
---wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNIST EMPIR model
-+ `python cleverhans_tutorials/mnist_attack.py --nb_samples=10000 --attack_iterations=50 
---model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on MNIST baseline model
++ `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 
+--wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNISTconv EMPIR model
++ `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 
+--model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on MNISTconv baseline model
++ `python examples/cifar10_attack.py --nb_samples=10000 --attack_iterations=50 
+--nb_filters=32 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on CIFARconv baseline model
 
 ## Results
 <table>
