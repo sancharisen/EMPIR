@@ -9,9 +9,9 @@ benchmark machine learning systems' vulnerability to
 You can learn more about such vulnerabilities on the accompanying [blog](http://cleverhans.io).
 
 ## Setting up
-+ Install Tensorflow 
++ Install [TensorFlow](https://www.tensorflow.org/) 
 + Git clone this repository
-+ Set environment variable PYTHONPATH to path of this repository
++ Set environment variable PYTHONPATH to include this repository `export PYTHONPATH="/path/to/EMPIR":$PYTHONPATH`
 
 We tested this setup on Python X.X, Tensorflow X.X, Ubuntu X.X and a single RTX 2080 Ti GPU 
 
@@ -79,74 +79,18 @@ We tested this setup on Python X.X, Tensorflow X.X, Ubuntu X.X and a single RTX 
     </tr>
 </table>
 
-### Dependencies
-
-This library uses [TensorFlow](https://www.tensorflow.org/) to accelerate graph
-computations performed by many machine learning models.
-Installing TensorFlow is therefore a pre-requisite.
-
-You can find instructions
-[here](https://www.tensorflow.org/install/).
-For better performance, it is also recommended to install TensorFlow
-with GPU support (detailed instructions on how to do this are available
-in the TensorFlow installation documentation).
-
-Installing TensorFlow will
-take care of all other dependencies like `numpy` and `scipy`.
-
-### Installation
-
-Once dependencies have been taken care of, you can install CleverHans using
-`pip` or by cloning this Github repository.
-
-#### `pip` installation
-
-If you are installing CleverHans using `pip`, run the following command:
-
-```
-pip install -e git+http://github.com/tensorflow/cleverhans.git#egg=cleverhans
-```
-
-#### Manual installation
-
-If you are installing CleverHans manually, you need to install TensorFlow
-first. Then, run the following command to clone the CleverHans repository
-into a folder of your choice:
-
-```
-git clone https://github.com/tensorflow/cleverhans
-```
-
-On UNIX machines, it is recommended to add your clone of this repository to the
-`PYTHONPATH` variable so as to be able to import `cleverhans` from any folder.
-
-```
-export PYTHONPATH="/path/to/cleverhans":$PYTHONPATH
-```
-
-You may want to make that change permanent through your shell's profile.
-
-### Currently supported setups
-
-Although CleverHans is likely to work on many other machine configurations, we
-currently [test it](https://travis-ci.org/tensorflow/cleverhans) with Python
-{2.7, 3.5} and TensorFlow {1.0, 1.1} on Ubuntu 14.04.5 LTS (Trusty Tahr).
-
 ## Citing this work
 
-If you use CleverHans for academic research, you are highly encouraged
-(though not required) to cite the following [paper](https://arxiv.org/abs/1610.00768):
-
 ```
-@article{papernot2016cleverhans,
-  title={cleverhans v1.0.0: an adversarial machine learning library},
-  author={Papernot, Nicolas and Goodfellow, Ian and Sheatsley, Ryan and Feinman, Reuben and McDaniel, Patrick},
-  journal={arXiv preprint arXiv:1610.00768},
-  year={2016}
+@inproceedings{
+sen2020empir,
+title={{\{}EMPIR{\}}: Ensembles of Mixed Precision Deep Networks for Increased Robustness Against Adversarial Attacks},
+author={Sanchari Sen and Balaraman Ravindran and Anand Raghunathan},
+booktitle={International Conference on Learning Representations},
+year={2020},
+url={https://openreview.net/forum?id=HJem3yHKwH}
 }
 ```
-There is not yet an ArXiv tech report for v2.0.0 but one will be prepared soon.
-
 ## Copyright
 
 Copyright 2017 - Google Inc., OpenAI and Pennsylvania State University.
