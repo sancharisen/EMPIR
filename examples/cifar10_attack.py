@@ -627,7 +627,7 @@ if __name__ == '__main__':
     # Attack specific flags
     par.add_argument('--eps', type=float, default=0.3,
                      help='epsilon')
-    par.add_argument('--attack', type=int, default=2,
+    par.add_argument('--attack', type=int, default=0,
                      help='Attack type, 0=CW, 2=FGSM')
     par.add_argument('--attack_iterations', type=int, default=100,
                      help='Number of iterations to run CW attack; 1000 is good')
