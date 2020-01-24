@@ -10,7 +10,7 @@ You can learn more about such vulnerabilities on the accompanying [blog](http://
 
 ## Setting up
 + Install [TensorFlow](https://www.tensorflow.org/) 
-+ Install [Keras] (https://keras.io/)
++ Install [Keras](https://keras.io/)
 + Git clone this repository
 
 We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X and a single RTX 2080 Ti GPU 
