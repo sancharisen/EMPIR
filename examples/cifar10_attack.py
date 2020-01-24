@@ -648,7 +648,6 @@ if __name__ == '__main__':
     par.add_argument('--wbitsList', type=int, nargs='+', help='List of No. of bits in weight representation for different layers')
     par.add_argument('--abitsList', type=int, nargs='+', help='List of No. of bits in activation representation for different layers')
     par.add_argument('--stocRound', help='Stochastic rounding for weights (only in training) and activations?', action="store_true")
-    par.add_argument('--seed', type=int, default=1, help='Setting a seed other than the default set_random_seed for initializing the lowprecision model') 
     par.add_argument('--model_path1', help='Path where saved model1 is stored and can be loaded')
     par.add_argument('--model_path2', help='Path where saved model2 is stored and can be loaded')
     par.add_argument('--ensembleThree', help='Use an ensemble of full precision and two low precision models that can be attacked directly', action="store_true") 
