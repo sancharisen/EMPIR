@@ -415,10 +415,10 @@ class BasicIterativeMethod(Attack):
                       'clip_min': self.clip_min, 'clip_max': self.clip_max}
 
         for i in range(self.nb_iter):
-            # FGM = FastGradientMethod(self.model, back=self.back,
-            #                          sess=self.sess)
-            FGM = FastGradientMethod(self.model, back=self.back, model_type=self.model_type,
-                                     num_classes=self.num_classes, sess=self.sess) 
+            FGM = FastGradientMethod(self.model, back=self.back,
+                                     sess=self.sess)
+            # FGM = FastGradientMethod(self.model, back=self.back, model_type=self.model_type,
+            #                          num_classes=self.num_classes, sess=self.sess) 
             # Compute this step's perturbation
             eta = FGM.generate(x + eta, phase, **fgm_params) - x
 

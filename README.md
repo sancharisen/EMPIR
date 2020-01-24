@@ -10,17 +10,16 @@ You can learn more about such vulnerabilities on the accompanying [blog](http://
 
 ## Setting up
 + Install [TensorFlow](https://www.tensorflow.org/) 
++ Install [Keras] (https://keras.io/)
 + Git clone this repository
-+ Set environment variable PYTHONPATH to include this repository `export PYTHONPATH="/path/to/EMPIR":$PYTHONPATH`
 
-We tested this setup on Python X.X, Tensorflow X.X, Ubuntu X.X and a single RTX 2080 Ti GPU 
+We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X and a single RTX 2080 Ti GPU 
 
 ## Example commands
 + `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNISTconv EMPIR model
 + `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on MNISTconv baseline model
 + `python examples/cifar10_attack.py --nb_samples=10000 --attack_iterations=50 --abits=$model1_activation_prec --wbits=$model2_weight_prec --abits2=$model2_activation_prec --wbits2=$model2_weight_prec --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt --ensembleThree` - White-Box CW attack on CIFARconv EMPIR model
-+ `python examples/cifar10_attack.py --nb_samples=10000 --attack_iterations=50 
---nb_filters=32 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on CIFARconv baseline model
++ `python examples/cifar10_attack.py --nb_samples=10000 --attack_iterations=50 --nb_filters=32 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on CIFARconv baseline model
 + `python examples/alexnet_attack.py --batch_size=100 --attack_iterations=50 --imagenet_path=/path/to/imagenet/tf_records --ensembleThree --abits=$model1_activation_prec --wbits=$model1_weight_prec --abits2=$model2_activation_prec --wbits2=$model2_weight_prec --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on AlexNet EMPIR model
 + `python examples/alexnet_attack.py --batch_size=100 --attack_iterations=50 --imagenet_path=/path/to/imagenet/tf_records --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on AlexNet baseline model
 

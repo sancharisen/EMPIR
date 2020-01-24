@@ -432,8 +432,6 @@ def main(argv=None):
             variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
             stored_variables = ['lp_conv1_init/k', 'lp_conv2_init/k', 'lp_conv3_init/k', 'lp_ip1init/W', 'lp_logits_init/W']
             variable_dict = dict(zip(stored_variables, variables[:5])) 
-            print("dict for mapping variables")
-            print(variable_dict)
             # Restore the first set of variables from model_path1
             saver = tf.train.Saver(variable_dict)
             saver.restore(sess, tf.train.latest_checkpoint(model_path1))
