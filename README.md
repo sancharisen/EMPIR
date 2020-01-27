@@ -46,7 +46,7 @@ We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> Full-precision (32 bits) <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EumogLgncVBCm932G6fUBPgBcipIcex0GhmG0SLIZdFT2g?e=K5MCh8">Download</a> </td>
        <td> 100 </td>
        <td> 100 </td>
        <td> 100 </td>
@@ -56,21 +56,21 @@ We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X
     <tr align="center">
        <td>CIFAR-10</td>
        <td> </td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
-       <td> 100 </td>
-       <td> 100 </td>
-       <td> 100 </td>
-       <td> 100 </td>
-       <td> 100 </td>
+       <td> abits=2, wbits=4 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EtnxDGIo-iBOgumA6qaAY7IBm7vCT7QVIFab5q2ZUTo4ww?e=RZd1E7">Download</a></td>
+       <td> abits=2, wbits=2 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EmU1sNJnvh5KjFNhRzU5phoBj7jVnszuE7XTOXXcVNES0g?e=E6PbCa">Download</a> </td>
+       <td> Full-precision (32 bits) <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EkFITagLxGNIsqQwksNRNB0B-4FOPb-hMEHyJykvKnlFbQ?e=Dn8c1k">Download</a> </td>
+       <td> 72.56 </td>
+       <td> 48.51 </td>
+       <td> 20.45 </td>
+       <td> 24.59 </td>
+       <td> 26.78 </td>
     </tr>
     <tr align="center">
        <td>ImageNet</td>
        <td> </td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
        <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> Full-precision (32 bits) <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EmBzpnERlD1HtAbgymP2B8ABZ2DJR_tBjY0c1ho9ETNl0A?e=rlaOoP">Download</a> </td>
        <td> 100 </td>
        <td> 100 </td>
        <td> 100 </td>
