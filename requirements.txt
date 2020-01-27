@@ -1,5 +1,4 @@
-nose
-pycodestyle
 scipy
 tensorflow
+keras
 matplotlib
