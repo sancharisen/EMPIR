@@ -624,7 +624,7 @@ if __name__ == '__main__':
     par.add_argument('--attack_iterations', type=int, default=100,
                      help='Number of iterations to run CW attack; 1000 is good')
     par.add_argument('--nb_samples', type=int,
-                     default=10, help='Nb of inputs to attack')
+                     default=10000, help='Nb of inputs to attack')
     par.add_argument(
         '--targeted', help='Run a targeted attack?', action="store_true")
     

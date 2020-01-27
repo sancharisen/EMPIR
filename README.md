@@ -12,8 +12,9 @@ You can learn more about such vulnerabilities on the accompanying [blog](http://
 + Install [TensorFlow](https://www.tensorflow.org/) 
 + Install [Keras](https://keras.io/)
 + Git clone this repository
++ For ImageNet results, download ImageNet dataset and convert the data into `TFRecords` using [this](https://github.com/tensorflow/tpu/blob/master/tools/datasets/imagenet_to_gcs.py) script. 
 
-We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X and a single RTX 2080 Ti GPU 
+We tested this setup using python 3.5, tensorflow-gpu 1.10, keras 2.2.4 and Ubuntu 18.04 on a single RTX 2080 Ti GPU. 
 
 ## Example commands
 + `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNISTconv EMPIR model
@@ -24,6 +25,7 @@ We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X
 + `python examples/alexnet_attack.py --batch_size=100 --attack_iterations=50 --imagenet_path=/path/to/imagenet/tf_records --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on AlexNet baseline model
 
 ## Results
++ EMPIR models
 <table>
     <tr align="center">
         <th rowspan="2">Dataset</th>
@@ -67,9 +69,56 @@ We tested this setup on python 3.5, tensorflow-gpu 1.10, keras 2.2.4, ubuntu X.X
     </tr>
     <tr align="center">
        <td>ImageNet</td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a></td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> abits=2, wbits=2 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/Eg4hbpGyleBGtgIdVitVWK8Bt1XAu9iVGXlEqAFIsnvrPA?e=nulYxg">Download</a></td>
+       <td> abits=4, wbits=4 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/ErFX38nXblRBr6jvrhLqKNYBKwYiwqslbeGVSlH75P5XGg?e=d3rGC3">Download</a> </td>
        <td> Full-precision (32 bits) <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EmBzpnERlD1HtAbgymP2B8ABZ2DJR_tBjY0c1ho9ETNl0A?e=rlaOoP">Download</a> </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+    </tr>
+</table>
+
++ Baseline models
+<table>
+    <tr align="center">
+        <th rowspan="2">Dataset</th>
+        <th rowspan="2">Models</th>
+        <th rowspan=2>Unperturbed Accuracy (%)</th>
+        <th colspan=5>Adversarial Accuracy (%)</th>
+    </tr>
+    <tr align="center">
+        <th>CW</th>
+        <th>FGSM</th>
+        <th>BIM</th>
+        <th>PGD</th>
+        <th>Average</th>
+    </tr>
+    <tr align="center">
+       <td>MNIST</td>
+       <td> MNISTconv <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EumogLgncVBCm932G6fUBPgBcipIcex0GhmG0SLIZdFT2g?e=K5MCh8">Download</a> </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+    </tr>
+    <tr align="center">
+       <td>CIFAR-10</td>
+       <td> CIFARconv <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EkFITagLxGNIsqQwksNRNB0B-4FOPb-hMEHyJykvKnlFbQ?e=Dn8c1k">Download</a> </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+       <td> 100 </td>
+    </tr>
+    <tr align="center">
+       <td>ImageNet</td>
+       <td> AlexNet <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EmBzpnERlD1HtAbgymP2B8ABZ2DJR_tBjY0c1ho9ETNl0A?e=rlaOoP">Download</a> </td>
        <td> 100 </td>
        <td> 100 </td>
        <td> 100 </td>

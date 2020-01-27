@@ -719,7 +719,7 @@ if __name__ == '__main__':
     par.add_argument('--abits2List', type=int, nargs='+', help='List of No. of bits in activation representation for different layers of model2')
 
     # Attack specific flags
-    par.add_argument('--eps', type=float, default=0.3,
+    par.add_argument('--eps', type=float, default=0.1,
                      help='epsilon')
     par.add_argument('--attack', type=int, default=0,
                      help='Attack type, 0=CW, 2=FGSM')
