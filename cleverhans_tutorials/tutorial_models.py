@@ -829,7 +829,6 @@ class Conv2DGroup(Layer):
             x1 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.input_channels/2, tf.int32)]), tf.slice(self.kernels, [0, 0, 0, 0], [-1, -1, -1, tf.cast(self.output_channels/2, tf.int32)]), (1,) + tuple(self.strides) + (1,), self.padding)
             x2 = tf.nn.conv2d(tf.slice(x, [0, 0, 0, tf.cast(self.input_channels/2, tf.int32)], [-1, -1, -1, -1]), tf.slice(self.kernels, [0, 0, 0, (tf.cast(self.output_channels/2, tf.int32))], [-1, -1, -1, -1]), (1,) + tuple(self.strides) + (1,), self.padding)
             x = tf.concat([x1, x2], 3)
-            output_shape = tf.shape(x) # Checking output shape before bias
             
             # adding bias
             if self.useBias:

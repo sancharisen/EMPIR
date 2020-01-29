@@ -1190,8 +1190,6 @@ def model_eval_adv_imagenet(sess, x, y, predictions=None, test_iterator=None, X_
     if writer is not None:
         eval_summary = tf.summary.scalar('acc', acc_value)
 
-    print('attack_params are')
-    print(attack_params)
 
     with sess.as_default():
 
@@ -1203,6 +1201,8 @@ def model_eval_adv_imagenet(sess, x, y, predictions=None, test_iterator=None, X_
             while True:
                 X_array, Y_array = sess.run([X_test, Y_test])
                 X_shape = X_array.shape
+                if X_array.shape[0] < args.batch_size: # Last batch discarded to avoid error with CW attack
+                    break 
 
                 # Generate the adversarial examples
                 X_adv_array = attacker.generate_np(X_array, phase, **attack_params)
@@ -1380,6 +1380,8 @@ def model_eval_ensemble_adv_imagenet(sess, x, y, predictions=None, test_iterator
             while True:
                 X_array, Y_array = sess.run([X_test, Y_test])
                 X_shape = X_array.shape
+                if X_array.shape[0] < args.batch_size:
+                    break
 
                 # Generate the adversarial examples
                 X_adv_array = attacker.generate_np(X_array, phase, **attack_params)

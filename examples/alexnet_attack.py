@@ -35,7 +35,6 @@ ATTACK_FGSM = 2
 ATTACK_MADRYETAL = 3
 ATTACK_BASICITER = 4
 MAX_BATCH_SIZE = 100
-MAX_BATCH_SIZE = 100
 
 # enum adversarial training types
 ADVERSARIAL_TRAINING_MADRYETAL = 1
@@ -52,7 +51,6 @@ _DEFAULT_IMAGE_SIZE = 224
 _NUM_CHANNELS = 3
 _NUM_CLASSES = 1000
 
-## Copied from resnet model
 _NUM_TRAIN_FILES = 1024
 _SHUFFLE_BUFFER = 10000
 
@@ -650,8 +648,7 @@ def main(argv=None):
         print("Attack undefined")
         sys.exit(1)
 
-    # attack_params.update({'clip_min': 0., 'clip_max': 1.})
-    attack_params.update({'clip_min': -2.2, 'clip_max': 2.7}) # Since max and min for imagenet turns out to be around -2.11 and 2.12, gives exact accuracy with eps=0
+    attack_params.update({'clip_min': -2.2, 'clip_max': 2.7}) # Since max and min for imagenet turns out to be around -2.11 and 2.12
     eval_params = {'batch_size': batch_size}
     '''
     adv_x = attacker.generate(x, phase, **attack_params)
@@ -723,16 +720,11 @@ if __name__ == '__main__':
                      help='epsilon')
     par.add_argument('--attack', type=int, default=0,
                      help='Attack type, 0=CW, 2=FGSM')
-    par.add_argument('--attack_iterations', type=int, default=100,
+    par.add_argument('--attack_iterations', type=int, default=50,
                      help='Number of iterations to run CW attack; 1000 is good')
     par.add_argument(
         '--targeted', help='Run a targeted attack?', action="store_true")
-    # # Adversarial training flags: Default
-    # par.add_argument(
-    #     '--adv', help='Do MadryEtAl adversarial training?', action="store_true")
-    # par.add_argument('--delay', type=int,
-    #                  default=0, help='Nb of epochs to delay adv training by')
-    # Adversarial training flags copied from mnist_attack.py
+    # Adversarial training flags 
     par.add_argument(
         '--adv', help='Adversarial training type?', type=int, default=0)
     par.add_argument('--delay', type=int,

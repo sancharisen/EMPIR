@@ -14,15 +14,15 @@ You can learn more about such vulnerabilities on the accompanying [blog](http://
 + Git clone this repository
 + For ImageNet results, download ImageNet dataset and convert the data into `TFRecords` using [this](https://github.com/tensorflow/tpu/blob/master/tools/datasets/imagenet_to_gcs.py) script. 
 
-We tested this setup using python 3.5, tensorflow-gpu 1.10, keras 2.2.4 and Ubuntu 18.04 on a single RTX 2080 Ti GPU. 
+We tested this setup using tensorflow-gpu 1.10, keras 2.2.4, python 3.5, CUDA 9.2 and Ubuntu 18.04 on a single RTX 2080 Ti GPU. Tensorflow was installed using [anaconda](https://www.anaconda.com/). 
 
 ## Example commands
-+ `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNISTconv EMPIR model
-+ `python examples/mnist_attack.py --nb_samples=10000 --attack_iterations=50 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on MNISTconv baseline model
-+ `python examples/cifar10_attack.py --nb_samples=10000 --attack_iterations=50 --abits=$model1_activation_prec --wbits=$model2_weight_prec --abits2=$model2_activation_prec --wbits2=$model2_weight_prec --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt --ensembleThree` - White-Box CW attack on CIFARconv EMPIR model
-+ `python examples/cifar10_attack.py --nb_samples=10000 --attack_iterations=50 --nb_filters=32 --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on CIFARconv baseline model
-+ `python examples/alexnet_attack.py --batch_size=100 --attack_iterations=50 --imagenet_path=/path/to/imagenet/tf_records --ensembleThree --abits=$model1_activation_prec --wbits=$model1_weight_prec --abits2=$model2_activation_prec --wbits2=$model2_weight_prec --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on AlexNet EMPIR model
-+ `python examples/alexnet_attack.py --batch_size=100 --attack_iterations=50 --imagenet_path=/path/to/imagenet/tf_records --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on AlexNet baseline model
++ `python examples/mnist_attack.py --wbits=$model1_weight_prec --abits=$model1_activation_prec --wbits2=$model2_weight_prec --abits2=$model2_activation_prec --ensembleThree --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on MNISTconv EMPIR model
++ `python examples/mnist_attack.py --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on MNISTconv baseline model
++ `python examples/cifar10_attack.py --abits=$model1_activation_prec --wbits=$model2_weight_prec --abits2=$model2_activation_prec --wbits2=$model2_weight_prec --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt --ensembleThree` - White-Box CW attack on CIFARconv EMPIR model
++ `python examples/cifar10_attack.py --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on CIFARconv baseline model
++ `python examples/alexnet_attack.py --batch_size=100 --imagenet_path=/path/to/imagenet/tf_records --ensembleThree --abits=$model1_activation_prec --wbits=$model1_weight_prec --abits2=$model2_activation_prec --wbits2=$model2_weight_prec --model_path1=/path/to/model1/ckpt --model_path2=/path/to/model2/ckpt --model_path3=/path/to/model3/ckpt` - White-Box CW attack on AlexNet EMPIR model
++ `python examples/alexnet_attack.py --batch_size=100 --imagenet_path=/path/to/imagenet/tf_records --model_path=/path/to/baseline/model/ckpt` - White-Box CW attack on AlexNet baseline model
 
 ## Results
 + EMPIR models
@@ -45,8 +45,8 @@ We tested this setup using python 3.5, tensorflow-gpu 1.10, keras 2.2.4 and Ubun
     </tr>
     <tr align="center">
        <td>MNIST</td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
-       <td> abits=4, wbits=2 <a href="https://github.com/sancharisen/cleverhans_EMPIR">Download</a> </td>
+       <td> abits=4, wbits=2 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EslYS5ShH0JBnoBLbWy8NAsBkGZebG9Z08-SiIPguPlcxA?e=5Dtb1k">Download</a> </td>
+       <td> abits=4, wbits=2 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EntWYPrfnsFMqpTdisN6egABpg8oqQjIEByA2IOXpsAOsw?e=bGV3yw">Download</a> </td>
        <td> Full-precision (32 bits) <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EumogLgncVBCm932G6fUBPgBcipIcex0GhmG0SLIZdFT2g?e=K5MCh8">Download</a> </td>
        <td> 100 </td>
        <td> 100 </td>

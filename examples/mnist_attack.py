@@ -621,7 +621,7 @@ if __name__ == '__main__':
     par.add_argument('--attack', type=int, default=0,
                      help='Attack type, 0=CW, 1=JSMA')
     par.add_argument("--eps", type=float, default=0.3)
-    par.add_argument('--attack_iterations', type=int, default=100,
+    par.add_argument('--attack_iterations', type=int, default=50,
                      help='Number of iterations to run CW attack; 1000 is good')
     par.add_argument('--nb_samples', type=int,
                      default=10000, help='Nb of inputs to attack')
