@@ -284,7 +284,6 @@ def data_imagenet(nb_epochs, batch_size, imagenet_path):
 def main(argv=None):
     model_path = FLAGS.model_path
     targeted = True if FLAGS.targeted else False
-    binary = True if FLAGS.binary else False
     scale = True if FLAGS.scale else False
     learning_rate = FLAGS.learning_rate
     nb_filters = FLAGS.nb_filters
@@ -492,7 +491,6 @@ def main(argv=None):
 
     # Train an Imagenet model
     train_params = {
-        'binary': binary,
         'lowprecision': lowprecision,
         'nb_epochs': nb_epochs,
         'batch_size': batch_size,
@@ -550,7 +548,7 @@ def main(argv=None):
             model_train_imagenet(sess, x, y, preds, train_iterator, train_x, train_y, phase=phase,
                     predictions_adv=preds_adv_train, evaluate=evaluate, args=train_params, save=save, rng=rng)
     else:
-        if ensembleThree: ## CombinedThree models have to loaded from different paths
+        if ensembleThree: ## ensembleThree models have to loaded from different paths
             variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
             # First 11 variables from path1
             stored_variables = ['lp_conv1_init/k', 'lp_conv1_init/b', 'lp_conv2_init/k', 'lp_conv3_init/k', 'lp_conv4_init/k', 'lp_conv5_init/k', 'lp_ip1init/W', 'lp_ip1init/b', 'lp_ip2init/W', 'lp_logits_init/W', 'lp_logits_init/b']
@@ -693,8 +691,6 @@ if __name__ == '__main__':
                      help='Size of training batches')
     par.add_argument('--learning_rate', type=float, default=0.001,
                      help='Learning rate')
-    par.add_argument('--binary', help='Use a binary model?',
-                     action="store_true")
     par.add_argument('--scale', help='Scale activations of the binary model?',
                      action="store_true")
     par.add_argument('--rand', help='Stochastic weight layer?',
