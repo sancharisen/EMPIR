@@ -57,7 +57,7 @@ We tested this setup using tensorflow-gpu 1.10, keras 2.2.4, python 3.5, CUDA 9.
     </tr>
     <tr align="center">
        <td>CIFAR-10</td>
-       <td> abits=2, wbits=4 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EtnxDGIo-iBOgumA6qaAY7IBm7vCT7QVIFab5q2ZUTo4ww?e=RZd1E7">Download</a></td>
+       <td> abits=2, wbits=4 <a href="https://drive.google.com/drive/folders/1PTqa4h2NrTb3ILoQi_qpMVyhVCc-0-kI?usp=sharing">Download</a></td>
        <td> abits=2, wbits=2 <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EmU1sNJnvh5KjFNhRzU5phoBj7jVnszuE7XTOXXcVNES0g?e=E6PbCa">Download</a> </td>
        <td> Full-precision (32 bits) <a href="https://purdue0-my.sharepoint.com/:f:/g/personal/sen9_purdue_edu/EkFITagLxGNIsqQwksNRNB0B-4FOPb-hMEHyJykvKnlFbQ?e=Dn8c1k">Download</a> </td>
        <td> 72.56 </td>
